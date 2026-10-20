@@ -24,15 +24,15 @@ When your chosen model goes down, gets deprecated, or hits a quota wall — and 
 This plugin is **especially useful if you rely on free models** (across OpenRouter, Google AI Studio, NVIDIA NIM, OpenCode Zen, KiloCode, Nous Portal, Z.AI, etc.):
 
 If you are relying on a free model and you get **rate-limited (`429`)** or hit a provider capacity cap:
-1. **(i) Your workflows are blocked** — autonomous loops, subagents, coding sessions, and scheduled jobs grind to an immediate halt.
-2. **(ii) Switching to another model requires manual work** — you *cannot* ask your agent to pick and switch to another model for you... **because your agent needs a working model just to run!**
+1. **Your workflows are blocked** — autonomous loops, subagents, coding sessions, and scheduled jobs grind to an immediate halt.
+2. **Switching to another model requires manual work** — you *cannot* ask your agent to pick and switch to another model for you... **because your agent needs a working model just to run!**
 
 ### Before vs. After `hermes-fallback`
 
 | Scenario | ❌ BEFORE (Without Fallback Heuristics) | ✅ AFTER (With Fallback Heuristics) |
 |---|---|---|
-| **(i) Workflow Continuity when Rate-Limited (`429`) or Offline** | **Workflows are blocked.** Long-running tasks, subagents, and cron jobs crash or stall as soon as your free model hits a rate limit or provider outage. | **Your workflows keep going!** Hermes automatically fails over to the next best matching model across your existing providers in real time. |
-| **(ii) Switching to Another Working Model / Provider** | **Requires manual work.** You can't ask your agent to find and switch to another model *because your agent needs a working model just to run!* You have to stop, browse catalogs, and edit config by hand. | **Happens automatically with zero LLM calls.** The heuristic engine runs even when your model is completely offline — ranking and switching models/providers automatically (or via `/fallback switch`). |
+| **Workflow Continuity when Rate-Limited (`429`) or Offline** | **Workflows are blocked.** Long-running tasks, subagents, and cron jobs crash or stall as soon as your free model hits a rate limit or provider outage. | **Your workflows keep going!** Hermes automatically fails over to the next best matching model across your existing providers in real time. |
+| **Switching to Another Working Model / Provider** | **Requires manual work.** You can't ask your agent to find and switch to another model *because your agent needs a working model just to run!* You have to stop, browse catalogs, and edit config by hand. | **Happens automatically with zero LLM calls.** The heuristic engine runs even when your model is completely offline — ranking and switching models/providers automatically (or via `/fallback switch`). |
 | **Fallback Configuration Maintenance** | **Undefined or brittle hardcoded slugs.** Hardcoded fallback models frequently get deprecated, renamed, or rate-limited on the same provider at the same time. | **Capability-based & cross-provider.** Declare *what* you need (`provider=auto`, `min_context=128k`, `min_params=30b`, `free_only=true`) and let the heuristic resolve live models dynamically. |
 
 > [!IMPORTANT]
