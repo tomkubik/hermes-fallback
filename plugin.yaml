@@ -1,0 +1,116 @@
+name: model-fallback-heuristic
+version: 0.2.0
+manifest_version: 2
+api_version: 1
+description: "Multi-provider heuristic model fallback and automatic failover routing across all configured providers (parameter count, context window, release recency, flash tier, tool support, provider preference, and reasoning effort) — works seamlessly with or without an LLM call."
+author: "Tom Kubik"
+license: MIT
+requires_hermes: ">=0.19"
+tags:
+  - fallback
+  - model-routing
+  - heuristics
+  - providers
+  - failover
+  - orchestrator
+
+provides_tools:
+  - fallback_heuristic_resolve
+  - fallback_heuristic_switch
+  - fallback_heuristic_configure
+  - fallback_heuristic_providers
+
+provides_hooks:
+  - on_session_start
+  - pre_llm_call
+  - api_request_error
+
+provides_middleware:
+  - llm_request
+  - llm_execution
+
+config_schema:
+  enabled:
+    type: bool
+    default: true
+    description: "Enable heuristic model fallback resolution and orchestrator failover."
+  sort_by:
+    type: str
+    default: "largest_parameter_count"
+    description: "Primary heuristic ranking strategy (largest_parameter_count, greatest_context, latest, latest_flash, smallest, provider_preference)."
+  provider:
+    type: str
+    default: "auto"
+    description: "Target provider or 'auto'/'existing'/'any' to search across all authenticated/configured providers."
+  providers:
+    type: list
+    default: []
+    description: "Ordered list of preferred providers to search when resolving heuristic fallbacks (e.g. ['anthropic', 'openrouter', 'gemini', 'nous'])."
+  exclude_providers:
+    type: list
+    default: []
+    description: "Providers to exclude from heuristic candidate selection."
+  allow_provider_switch:
+    type: bool
+    default: true
+    description: "Allow switching to a different authenticated provider when the chosen model/provider is unavailable."
+  prefer_current_provider:
+    type: bool
+    default: false
+    description: "Prefer candidates from the currently active provider before switching to other authenticated providers."
+  free_only:
+    type: bool
+    default: false
+    description: "Restrict candidate selection to free ($0) models only."
+  require_tools:
+    type: bool
+    default: true
+    description: "Require candidate models to support tool/function calling."
+  flash_only:
+    type: bool
+    default: false
+    description: "Restrict candidate selection to fast/flash tier models."
+  min_context:
+    type: int
+    default: 0
+    description: "Minimum context window length in tokens (e.g. 64000, 128000, 200000)."
+  max_context:
+    type: int
+    default: 0
+    description: "Maximum context window length in tokens (0 = no upper bound)."
+  min_params:
+    type: float
+    default: 0.0
+    description: "Minimum parameter size in billions (e.g. 30.0, 70.0)."
+  max_params:
+    type: float
+    default: 0.0
+    description: "Maximum parameter size in billions (0 = no upper bound)."
+  vendor:
+    type: str
+    default: ""
+    description: "Optional vendor/family substring filter (e.g. 'anthropic', 'google', 'meta-llama', 'qwen', 'deepseek')."
+  name_filter:
+    type: str
+    default: ""
+    description: "Optional model ID/name substring filter (e.g. 'sonnet', 'coder', 'flash')."
+  reasoning_effort:
+    type: str
+    default: ""
+    description: "Reasoning effort override for heuristic fallback models (none, minimal, low, medium, high, xhigh, max, default)."
+  max_candidates:
+    type: int
+    default: 3
+    description: "Maximum number of concrete fallback candidates materialized per heuristic rule."
+  auto_sync_config:
+    type: bool
+    default: true
+    description: "Automatically materialize resolved heuristic candidates into fallback_providers in config.yaml so Hermes Core uses them even before a model call."
+  auto_switch_primary_when_unavailable:
+    type: bool
+    default: true
+    description: "Automatically resolve a replacement model from existing providers when the selected primary model or provider is unavailable."
+  first_launch_completed:
+    type: bool
+    default: false
+    description: "Tracks whether the first-launch free-model provider check and API key setup guide has been completed."
