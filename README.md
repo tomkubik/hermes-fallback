@@ -146,31 +146,6 @@ You can combine any of the following parameters to control how replacement model
 
 ---
 
-## 📊 Live Catalog Check: Providers Offering Free Models / Free Tiers
-
-| # | Provider (`id`) | Free Models Available | Sample Free Models | Env Var | Get a Free API Key |
-|---|---|---|---|---|---|
-| **1** | **OpenRouter** (`openrouter`) ★ | **60+ `:free` models** | `nvidia/nemotron-3-super-120b-a12b:free`, `minimax/minimax-m3.1-flash:free`, `qwen/qwen3-coder:free`, `deepseek/deepseek-r1:free`, `meta-llama/llama-3.3-70b-instruct:free` | `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) |
-| **2** | **Google AI Studio / Gemini** (`gemini`) ★ | **Free API tier (18+ models)** | `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3.7-flash`, `gemini-flash-lite-latest` | `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| **3** | **NVIDIA NIM** (`nvidia`) ★ | **100+ `$0` dev models** | `nvidia/llama-3.3-70b-instruct`, `nvidia/llama-3.1-nemotron-70b-instruct`, `mistralai/mistral-nemotron` | `NVIDIA_API_KEY` | [build.nvidia.com](https://build.nvidia.com) |
-| **4** | **OpenCode Zen** (`opencode-zen`) ★ | **45 `-free` models** | `nemotron-3-ultra-free`, `nemotron-3-super-free`, `nemotron-3.5-super-vl-free`, `ling-3.0-flash-fin-free` | `OPENCODE_ZEN_API_KEY` | [opencode.ai/zen](https://opencode.ai/zen) |
-| **5** | **Kilo Code Gateway** (`kilocode`) ★ | **24 `:free` models** | `minimax/minimax-m3.1-flash:free`, `cohere/north-mini-code:free`, `xingchen-agi/xing4.0-29b-a4b:free`, `openrouter/free` | `KILOCODE_API_KEY` | [kilocode.ai](https://kilocode.ai) |
-| **6** | **Nous Research Portal** (`nous`) ★ | **6–8 `:free` models** | `stepfun/step-3.7-flash:free`, `poolside/laguna-s-2.1:free`, `upstage/solar-mini4:free`, `meituan/longcat-2.5-preview:free` | `NOUS_API_KEY` | [portal.nousresearch.com](https://portal.nousresearch.com) |
-| **7** | **Vercel AI Gateway** (`ai-gateway`) | **9 `$0` models** | `meta/llama-3.3-70b`, `meta/llama-4-maverick`, `meta/llama-4-scout`, `minimax/minimax-m3.1-flash` | `AI_GATEWAY_API_KEY` | [vercel.com/ai-gateway](https://vercel.com/ai-gateway) |
-| **8** | **Z.AI / Zhipu GLM** (`zai`) | **3 permanently `$0` Flash models** | `glm-4.7-flash`, `glm-4.6v-flash`, `glm-4.5-flash` | `GLM_API_KEY` / `ZAI_API_KEY` | [chat.z.ai](https://chat.z.ai) |
-| **9** | **Hugging Face Inference** (`huggingface`) | **Free serverless tier** | `zai-org/GLM-4.7-Flash`, `Qwen/Qwen3.5-72B-Instruct`, `deepseek-ai/DeepSeek-V3.2` | `HF_TOKEN` | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
-| **10** | **OpenCode Go** (`opencode-go`) | **5 `-free` models** | `minimax-m3.1-flash-free`, `step-5-preview-free`, `longcat-2.5-preview-free`, `beam-free` | `OPENCODE_GO_API_KEY` | [opencode.ai](https://opencode.ai) |
-| **11** | **Alibaba DashScope / Qwen** (`alibaba`) | **4 `$0` models + free quota** | `qwen3.8-flash`, `qwen3.6-flash`, `deepseek-r1-distill-llama-8b` | `DASHSCOPE_API_KEY` | [modelstudio.console.alibabacloud.com](https://modelstudio.console.alibabacloud.com) |
-| **12** | **Tencent TokenHub** (`tencent-tokenhub`) | **2 `$0` models** | `hy3-preview`, `hy3` | `TENCENT_TOKENHUB_API_KEY` | [tokenhub.tencentmaas.com](https://tokenhub.tencentmaas.com) |
-| **13** | **CommandCode** (`commandcode`) | **1 `:free` model** | `inclusionai/ling-3.1-flash:free` | `COMMANDCODE_API_KEY` | [commandcode.ai](https://commandcode.ai) |
-| **14** | **Novita AI** (`novita`) | **1 `$0` model** | `apodex/apodex-1.1-mini` | `NOVITA_API_KEY` | [novita.ai/settings/key-management](https://novita.ai/settings/key-management) |
-| **15** | **GroqCloud** (`groq`) | **Free dev tier + `$0` model** | `allam-2-7b`, `llama-3.3-70b-versatile` | `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) |
-| **16** | **Mistral AI** (`mistral`) | **Free Experiment tier + 2 `$0` Labs** | `labs-devstral-small-2512`, `labs-leanstral-1-5-1` | `MISTRAL_API_KEY` | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) |
-| **17** | **Cohere** (`cohere`) | **Free Trial key + 2 `$0` models** | `north-mini-code-1-0`, `north-small-translate-09-2026` | `COHERE_API_KEY` | [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) |
-| **18** | **Ollama / LM Studio / vLLM** (`ollama`) | **100% free local inference** | `qwen3-coder:30b`, `llama3.3:70b`, `gpt-oss:20b` | *(none required)* | [ollama.com](https://ollama.com) |
-
----
-
 ## 🛠️ Zero-LLM-Call Usage (Works When Your Model Is Offline)
 
 Because you can't use an LLM to fix an offline LLM, every command in this plugin runs **100% locally without a model call**.
@@ -293,6 +268,31 @@ fallback_providers:
 > [!WARNING]
 > **Static vs. Heuristic Fallbacks:**
 > If you also have manual static entries in `fallback_providers` (e.g. `{provider: openai, model: gpt-4o-mini}`), the plugin preserves them intact alongside its managed heuristic entries. Running `hermes fallback-heuristic clear` or `/fallback clear` only removes heuristic rules unless you explicitly clear all entries.
+
+---
+
+## 📊 Live Catalog Check: Providers Offering Free Models / Free Tiers
+
+| # | Provider (`id`) | Free Models Available | Sample Free Models | Env Var | Get a Free API Key |
+|---|---|---|---|---|---|
+| **1** | **OpenRouter** (`openrouter`) ★ | **60+ `:free` models** | `nvidia/nemotron-3-super-120b-a12b:free`, `minimax/minimax-m3.1-flash:free`, `qwen/qwen3-coder:free`, `deepseek/deepseek-r1:free`, `meta-llama/llama-3.3-70b-instruct:free` | `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) |
+| **2** | **Google AI Studio / Gemini** (`gemini`) ★ | **Free API tier (18+ models)** | `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3.7-flash`, `gemini-flash-lite-latest` | `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| **3** | **NVIDIA NIM** (`nvidia`) ★ | **100+ `$0` dev models** | `nvidia/llama-3.3-70b-instruct`, `nvidia/llama-3.1-nemotron-70b-instruct`, `mistralai/mistral-nemotron` | `NVIDIA_API_KEY` | [build.nvidia.com](https://build.nvidia.com) |
+| **4** | **OpenCode Zen** (`opencode-zen`) ★ | **45 `-free` models** | `nemotron-3-ultra-free`, `nemotron-3-super-free`, `nemotron-3.5-super-vl-free`, `ling-3.0-flash-fin-free` | `OPENCODE_ZEN_API_KEY` | [opencode.ai/zen](https://opencode.ai/zen) |
+| **5** | **Kilo Code Gateway** (`kilocode`) ★ | **24 `:free` models** | `minimax/minimax-m3.1-flash:free`, `cohere/north-mini-code:free`, `xingchen-agi/xing4.0-29b-a4b:free`, `openrouter/free` | `KILOCODE_API_KEY` | [kilocode.ai](https://kilocode.ai) |
+| **6** | **Nous Research Portal** (`nous`) ★ | **6–8 `:free` models** | `stepfun/step-3.7-flash:free`, `poolside/laguna-s-2.1:free`, `upstage/solar-mini4:free`, `meituan/longcat-2.5-preview:free` | `NOUS_API_KEY` | [portal.nousresearch.com](https://portal.nousresearch.com) |
+| **7** | **Vercel AI Gateway** (`ai-gateway`) | **9 `$0` models** | `meta/llama-3.3-70b`, `meta/llama-4-maverick`, `meta/llama-4-scout`, `minimax/minimax-m3.1-flash` | `AI_GATEWAY_API_KEY` | [vercel.com/ai-gateway](https://vercel.com/ai-gateway) |
+| **8** | **Z.AI / Zhipu GLM** (`zai`) | **3 permanently `$0` Flash models** | `glm-4.7-flash`, `glm-4.6v-flash`, `glm-4.5-flash` | `GLM_API_KEY` / `ZAI_API_KEY` | [chat.z.ai](https://chat.z.ai) |
+| **9** | **Hugging Face Inference** (`huggingface`) | **Free serverless tier** | `zai-org/GLM-4.7-Flash`, `Qwen/Qwen3.5-72B-Instruct`, `deepseek-ai/DeepSeek-V3.2` | `HF_TOKEN` | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
+| **10** | **OpenCode Go** (`opencode-go`) | **5 `-free` models** | `minimax-m3.1-flash-free`, `step-5-preview-free`, `longcat-2.5-preview-free`, `beam-free` | `OPENCODE_GO_API_KEY` | [opencode.ai](https://opencode.ai) |
+| **11** | **Alibaba DashScope / Qwen** (`alibaba`) | **4 `$0` models + free quota** | `qwen3.8-flash`, `qwen3.6-flash`, `deepseek-r1-distill-llama-8b` | `DASHSCOPE_API_KEY` | [modelstudio.console.alibabacloud.com](https://modelstudio.console.alibabacloud.com) |
+| **12** | **Tencent TokenHub** (`tencent-tokenhub`) | **2 `$0` models** | `hy3-preview`, `hy3` | `TENCENT_TOKENHUB_API_KEY` | [tokenhub.tencentmaas.com](https://tokenhub.tencentmaas.com) |
+| **13** | **CommandCode** (`commandcode`) | **1 `:free` model** | `inclusionai/ling-3.1-flash:free` | `COMMANDCODE_API_KEY` | [commandcode.ai](https://commandcode.ai) |
+| **14** | **Novita AI** (`novita`) | **1 `$0` model** | `apodex/apodex-1.1-mini` | `NOVITA_API_KEY` | [novita.ai/settings/key-management](https://novita.ai/settings/key-management) |
+| **15** | **GroqCloud** (`groq`) | **Free dev tier + `$0` model** | `allam-2-7b`, `llama-3.3-70b-versatile` | `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) |
+| **16** | **Mistral AI** (`mistral`) | **Free Experiment tier + 2 `$0` Labs** | `labs-devstral-small-2512`, `labs-leanstral-1-5-1` | `MISTRAL_API_KEY` | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) |
+| **17** | **Cohere** (`cohere`) | **Free Trial key + 2 `$0` models** | `north-mini-code-1-0`, `north-small-translate-09-2026` | `COHERE_API_KEY` | [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) |
+| **18** | **Ollama / LM Studio / vLLM** (`ollama`) | **100% free local inference** | `qwen3-coder:30b`, `llama3.3:70b`, `gpt-oss:20b` | *(none required)* | [ollama.com](https://ollama.com) |
 
 ---
 
