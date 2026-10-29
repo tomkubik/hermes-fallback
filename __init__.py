@@ -299,13 +299,6 @@ def register(ctx: Any) -> None:
             handler_fn=cmd_fallback_heuristic,
             description="Configure and run dynamic multi-provider model fallback heuristics without an LLM call.",
         )
-        ctx.register_cli_command(
-            name="fallback",
-            help="Manage the fallback provider chain and dynamic model heuristics",
-            setup_fn=setup_cli_parser,
-            handler_fn=cmd_fallback,
-            description="Manage fallback providers and dynamic model heuristics.",
-        )
 
     # 6. System prompt section
     if hasattr(ctx, "register_system_prompt_section"):

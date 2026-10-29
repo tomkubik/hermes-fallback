@@ -459,7 +459,7 @@ class TestZeroLLMCallSettingsSyncAndSwitch(unittest.TestCase):
                     item["provider"] == "anthropic" and item["model"] == "claude-opus-4-6"
                 )
 
-    def test_switch_model_with_heuristic_switches_provider_when_primary_unavailable(self):
+    def test_switch_model_with_heuristic_preserves_primary_by_default_and_switches_on_opt_in(self):
         cfg = {
             "model": {"provider": "openai", "default": "gpt-unavailable-999"},
         }
@@ -471,11 +471,27 @@ class TestZeroLLMCallSettingsSyncAndSwitch(unittest.TestCase):
             "config_sync.is_provider_available",
             side_effect=lambda p, config=None: p in ("gemini", "openrouter"),
         ):
-            res = ensure_available_model_or_fallback(config=cfg, save=False)
-            self.assertEqual(res["status"], "switched_primary")
-            self.assertTrue(res["primary_was_unavailable"])
+            # 1. Default auto_switch_primary_when_unavailable is False:
+            #    rewrites fallback_providers only and preserves model.provider / model.default
+            res_default = ensure_available_model_or_fallback(config=cfg, save=False)
+            self.assertEqual(res_default["status"], "synced_fallbacks")
+            self.assertTrue(res_default["primary_was_unavailable"])
+            self.assertEqual(cfg["model"]["provider"], "openai")
+            self.assertEqual(cfg["model"]["default"], "gpt-unavailable-999")
+            self.assertTrue(len(cfg.get("fallback_providers") or []) >= 1)
+
+            # 2. Opt-in auto_switch_primary_when_unavailable=True:
+            #    switches model.provider / model.default in config.yaml
+            res_opt_in = ensure_available_model_or_fallback(
+                config=cfg,
+                save=False,
+                auto_switch_primary_when_unavailable=True,
+            )
+            self.assertEqual(res_opt_in["status"], "switched_primary")
+            self.assertTrue(res_opt_in["primary_was_unavailable"])
             self.assertIn(cfg["model"]["provider"], ("gemini", "openrouter"))
             self.assertNotEqual(cfg["model"]["default"], "gpt-unavailable-999")
+            self.assertTrue(str(res_opt_in.get("switch_command_hint", "")).startswith("/model "))
             self.assertTrue(len(cfg.get("fallback_providers") or []) >= 1)
 
     def test_slash_commands_work_without_llm_call(self):
@@ -802,7 +818,7 @@ class TestHermesPluginRegistrationAndValidation(unittest.TestCase):
         self.assertEqual(set(middlewares), {"llm_request", "llm_execution"})
         self.assertIn("fallback", commands)
         self.assertIn("fallback-heuristic", commands)
-        self.assertIn("fallback-heuristic", cli_commands)
+        self.assertEqual(cli_commands, ["fallback-heuristic"])
         self.assertEqual(prompt_sections, ["model_fallback_heuristic"])
 
 
@@ -875,6 +891,20 @@ class TestFirstLaunchOnboardingAndFreeProviderCheck(unittest.TestCase):
             # 4. /fallback free-providers still displays the live check on demand
             free_out = handle_slash_command("free-providers")
             self.assertIn("OpenRouter (`openrouter`)", free_out)
+
+    def test_save_provider_api_key_uses_save_env_value_without_mutating_environ(self):
+        from onboarding import save_provider_api_key
+
+        saved_calls = []
+        fake_cfg_mod = SimpleNamespace(save_env_value=lambda k, v: saved_calls.append((k, v)))
+        with patch.dict(sys.modules, {"hermes_cli.config": fake_cfg_mod}), patch.dict(
+            os.environ, {}, clear=False
+        ):
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            ok = save_provider_api_key("OPENROUTER_API_KEY", "sk-or-test-key")
+            self.assertTrue(ok)
+            self.assertEqual(saved_calls, [("OPENROUTER_API_KEY", "sk-or-test-key")])
+            self.assertNotIn("OPENROUTER_API_KEY", os.environ)
 
 
 if __name__ == "__main__":

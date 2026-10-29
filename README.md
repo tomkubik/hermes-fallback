@@ -56,9 +56,14 @@ flowchart LR
     G --> C
 ```
 
-1. **Pre-Flight Check (`on_session_start` & `pre_llm_call`)**: Before your agent even makes its first LLM call, the plugin verifies whether your primary provider and model are available and pre-populates `fallback_providers` in `config.yaml` with the top-ranked candidates from your authenticated providers.
-2. **Mid-Session Error Recovery (`api_request_error` & `llm_execution`)**: If a model returns `429 Too Many Requests`, `502/503` provider overload, `404` retired model, or `401/402/403` quota/auth errors, the plugin records the unavailable route, excludes it, and dynamically refreshes the fallback chain from your remaining providers.
-3. **Cross-Provider Switching**: Unlike single-provider fallbacks, `provider` is a first-class heuristic parameter — seamlessly hopping from e.g. `openrouter` → `gemini` → `nvidia` → `nous` → `ollama` when an entire provider is rate-limited.
+1. **Pre-Flight Check (`on_session_start` & `pre_llm_call`)**: Before your agent makes its first LLM call, the plugin resolves the top-ranked candidates from your authenticated providers and writes `fallback_providers` in `~/.hermes/config.yaml` (via `hermes_cli.config.save_config`).
+2. **Mid-Session Error Recovery (`api_request_error`, `llm_request` & `llm_execution`)**: If a model returns `429 Too Many Requests`, `502/503` provider overload, `404` retired model, or `401/402/403` quota/auth errors, the plugin records the unavailable route for the session, excludes it, and dynamically rewrites `fallback_providers` in `config.yaml` from your remaining providers while `llm_request` middleware routes per-request model parameters.
+3. **Cross-Provider Switching**: Unlike single-provider fallbacks, `provider` is a first-class heuristic parameter — seamlessly populating fallback routes across e.g. `openrouter` → `gemini` → `nvidia` → `nous` → `ollama` when a provider is rate-limited.
+
+> [!NOTE]
+> **What `config.yaml` Keys Are Written by Hooks:**
+> When `auto_sync_config: true` (the default), the `on_session_start`, `pre_llm_call`, and `api_request_error` hooks rewrite **`fallback_providers`** in `~/.hermes/config.yaml` at session start and after API errors (preserving any manual non-heuristic entries).
+> By default, **`auto_switch_primary_when_unavailable` is `false`**, so hooks never silently overwrite your primary `model.provider` or `model.default` in `config.yaml` (and never mutate live `AIAgent` internals). To switch your primary model in `config.yaml`, run `/fallback switch` / `hermes fallback-heuristic switch` (then `/model <provider>/<model>` for the live session), or explicitly opt in by setting `auto_switch_primary_when_unavailable: true`.
 
 ---
 
@@ -95,7 +100,7 @@ On the **first launch of the plugin** (or whenever you run `hermes fallback-heur
 ### Running the First-Launch Setup
 
 ```bash
-# Launch interactive setup (scans free providers, lets you pick by number/name, and saves keys to ~/.hermes/.env)
+# Launch interactive setup (scans free providers, lets you pick by number/name, and saves keys via hermes_cli.config.save_env_value)
 hermes fallback-heuristic setup
 
 # Or choose your preferred fallback providers directly
@@ -105,7 +110,7 @@ hermes fallback-heuristic setup openrouter,gemini,nvidia
 hermes fallback-heuristic free-providers
 ```
 
-> 📌 **Remember:** In an active Hermes chat session, you can also run `/fallback setup` or `/fallback setup openrouter,gemini,nvidia` — it executes locally without needing an LLM response!
+> 📌 **Remember:** In an active Hermes chat session, you can also run `/fallback setup` or `/fallback setup openrouter,gemini,nvidia` — it executes locally without needing an LLM response! You can also manage provider credentials anytime via `hermes setup` or `hermes auth`.
 
 ---
 
@@ -150,7 +155,7 @@ You can combine any of the following parameters to control how replacement model
 
 Because you can't use an LLM to fix an offline LLM, every command in this plugin runs **100% locally without a model call**.
 
-### 1. Terminal CLI (`hermes fallback-heuristic` or `hermes fallback`)
+### 1. Terminal CLI (`hermes fallback-heuristic`)
 
 ```bash
 # View current primary model, heuristic settings, available providers, and fallback chain
@@ -233,7 +238,7 @@ plugins:
         reasoning_effort: default
         max_candidates: 3
         auto_sync_config: true
-        auto_switch_primary_when_unavailable: true
+        auto_switch_primary_when_unavailable: false
 ```
 
 Or declare multi-rule heuristic chains directly inside `fallback_providers`:

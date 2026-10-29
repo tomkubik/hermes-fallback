@@ -241,7 +241,6 @@ def handle_switch(args: dict[str, Any], **kwargs: Any) -> str:
             if settings.get("provider") in (None, "", "nous"):
                 overrides["provider"] = "existing"
 
-        parent_agent = kwargs.get("parent_agent")
         result = switch_model_with_heuristic(
             overrides if overrides else None,
             config=cfg,
@@ -249,7 +248,6 @@ def handle_switch(args: dict[str, Any], **kwargs: Any) -> str:
             exclude_current=exclude_current,
             exclude_providers=excl_provs,
             exclude_models=excl_models,
-            agent=parent_agent,
         )
         if result is None:
             return json.dumps(
@@ -519,17 +517,39 @@ def api_request_error_hook(**kwargs: Any) -> None:
 
 
 def llm_request_middleware(request: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Middleware: ``llm_request`` — normalizes reasoning config for heuristic fallback models."""
+    """Middleware: ``llm_request`` — routes per-request model when the requested model failed in-session,
+    and normalizes reasoning config for heuristic fallback models."""
     if not isinstance(request, dict):
         return request
     try:
         model = str(getattr(context, "model", None) or request.get("model") or "").strip()
+        provider = normalize_provider_name(getattr(context, "provider", None) or "")
         if not model:
             return request
         cfg = load_hermes_config()
         fp_list = cfg.get("fallback_providers")
         if not isinstance(fp_list, list):
             return request
+
+        updated_req = dict(request)
+        changed = False
+
+        # Per-request routing if the current request's model was marked unavailable this session
+        model_key = model.lower()
+        prov_model_key = f"{provider}/{model_key}" if provider else model_key
+        if model_key in _SESSION_UNAVAILABLE_MODELS or prov_model_key in _SESSION_UNAVAILABLE_MODELS:
+            for entry in fp_list:
+                if not isinstance(entry, dict):
+                    continue
+                cand_prov = normalize_provider_name(entry.get("provider"))
+                cand_model = str(entry.get("model") or "").strip()
+                if not cand_model or cand_model.lower() in _SESSION_UNAVAILABLE_MODELS:
+                    continue
+                if not provider or not cand_prov or cand_prov == provider:
+                    updated_req["model"] = cand_model
+                    model = cand_model
+                    changed = True
+                    break
 
         matched_entry = None
         for entry in fp_list:
@@ -542,18 +562,18 @@ def llm_request_middleware(request: dict[str, Any], context: Any) -> dict[str, A
                 break
 
         if matched_entry is None:
-            return request
+            return updated_req if changed else request
 
         eff = matched_entry.get("reasoning_effort")
         if eff in ("none", "off", "false", False):
-            updated = dict(request)
-            updated.pop("reasoning_effort", None)
-            extra_body = updated.get("extra_body")
+            updated_req.pop("reasoning_effort", None)
+            extra_body = updated_req.get("extra_body")
             if isinstance(extra_body, dict) and "reasoning" in extra_body:
                 eb = dict(extra_body)
                 eb["reasoning"] = {"enabled": False}
-                updated["extra_body"] = eb
-            return updated
+                updated_req["extra_body"] = eb
+            changed = True
+        return updated_req if changed else request
     except Exception as exc:
         logger.debug("llm_request_middleware skipped: %s", exc)
     return request

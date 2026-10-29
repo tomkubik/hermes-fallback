@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import sys
 from typing import Any, Dict, List, Optional
 
 try:
@@ -90,34 +91,18 @@ except ImportError:
 # Declarative fallback chain (stores raw rules, preserves inactive heuristics); always fresh copy.
 _read_chain = get_stored_fallback_rules
 
-_MISSING_ACTIVE_PROVIDER = object()
 
-
-def _identity(entry: Dict[str, Any]):
-    """BackendIdentity for a ``{provider, model, base_url?}`` entry."""
-    try:
-        from agent.backend_identity import BackendIdentity
-
-        return BackendIdentity.build(
-            provider=entry.get("provider"),
-            model=entry.get("model"),
-            base_url=entry.get("base_url"),
-        )
-    except Exception:
-        return (
-            normalize_provider_name(str(entry.get("provider") or "")),
-            str(entry.get("model") or "").strip().lower(),
-            str(entry.get("base_url") or "").strip().rstrip("/").lower(),
-        )
+def _identity(entry: Dict[str, Any]) -> tuple[str, str, str]:
+    """Normalized identity tuple for a ``{provider, model, base_url?}`` entry."""
+    return (
+        normalize_provider_name(str(entry.get("provider") or "")),
+        str(entry.get("model") or "").strip().lower(),
+        str(entry.get("base_url") or "").strip().rstrip("/").lower(),
+    )
 
 
 def _same_deployment(a: Any, b: Any) -> bool:
-    try:
-        from agent.backend_identity import same_deployment
-
-        return same_deployment(a, b)
-    except Exception:
-        return a == b
+    return a == b
 
 
 def _write_chain(config: Dict[str, Any], chain: List[Dict[str, Any]]) -> None:
@@ -184,53 +169,6 @@ def _extract_fallback_from_model_cfg(model_cfg: Any) -> Optional[Dict[str, Any]]
         }
     )
     return entry
-
-
-def _snapshot_auth_active_provider() -> Any:
-    """Return the current ``active_provider`` in auth.json."""
-    from hermes_cli.auth import _auth_store_lock, _load_auth_store
-
-    with _auth_store_lock():
-        store = _load_auth_store()
-        return store.get("active_provider", _MISSING_ACTIVE_PROVIDER)
-
-
-def _restore_auth_active_provider(value: Any) -> None:
-    """Write back a previously snapshotted ``active_provider`` value."""
-    from hermes_cli.auth import _auth_store_lock, _load_auth_store, _save_auth_store
-
-    with _auth_store_lock():
-        store = _load_auth_store()
-        if value is _MISSING_ACTIVE_PROVIDER:
-            store.pop("active_provider", None)
-        else:
-            store["active_provider"] = value
-        _save_auth_store(store)
-
-
-def _restore_model_cfg(model_before: Any) -> None:
-    """Restore ``config["model"]`` to a previously-captured snapshot."""
-    cfg = load_hermes_config()
-    cfg.pop("model", None)
-    if model_before is not None:
-        cfg["model"] = copy.deepcopy(model_before)
-    save_hermes_config(cfg)
-
-
-def _restore_primary_route(model_before: Any, active_provider_before: Any) -> None:
-    """Attempt both halves of temporary picker-route restoration."""
-    errors: list[BaseException] = []
-    try:
-        _restore_model_cfg(model_before)
-    except BaseException as exc:
-        errors.append(exc)
-    try:
-        _restore_auth_active_provider(active_provider_before)
-    except BaseException as exc:
-        errors.append(exc)
-    if errors:
-        details = "; ".join(str(exc) for exc in errors)
-        raise RuntimeError(f"Could not fully restore the primary route: {details}") from errors[0]
 
 
 def _entries(n: int) -> str:
@@ -351,54 +289,45 @@ def cmd_fallback_add(args) -> None:
         print(f"  Chain is now {_entries(len(chain))} long.\n")
         return
 
-    # Interactive picker path (same as hermes model)
-    from hermes_cli.main import _require_tty, select_provider_and_model
-
-    _require_tty("fallback add")
-
-    model_before = copy.deepcopy(load_hermes_config().get("model"))
-    active_provider_before = _snapshot_auth_active_provider()
-    print(
-        "\n  Adding a fallback provider.  The picker below is the same one used by\n"
-        "  `hermes model` — select the provider + model you want as a fallback.\n"
-    )
-
-    try:
-        select_provider_and_model(args=args)
-        after_cfg = load_hermes_config()
-        model_after = after_cfg.get("model")
-        new_entry = _extract_fallback_from_model_cfg(model_after)
-    except BaseException as picker_error:
-        try:
-            _restore_primary_route(model_before, active_provider_before)
-        except Exception as restore_error:
-            picker_error.add_note(
-                "Could not fully restore the primary route after fallback "
-                f"selection failed: {restore_error}"
-            )
-        raise
-
-    _restore_primary_route(model_before, active_provider_before)
-
-    if not new_entry:
-        print("\n  No fallback added.")
+    # Interactive prompt path without mutating config["model"] or auth.json
+    if not sys.stdin.isatty():
+        print("\n  Specify --provider / --model or --criteria when running non-interactively.\n")
         return
 
+    cfg = load_hermes_config()
+    available = discover_existing_providers(config=cfg)
+    default_prov = available[0] if available else "openrouter"
+    print("\n  Add a fallback entry to fallback_providers in config.yaml")
+    if available:
+        print(f"  Configured providers: {', '.join(available)}")
+    try:
+        raw_prov = input(f"  Provider [{default_prov}] (or 'auto' for heuristic): ").strip() or default_prov
+        raw_model = input("  Model ID or heuristic criteria [auto:largest_parameter_count]: ").strip() or "auto:largest_parameter_count"
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Cancelled — no fallback added.")
+        return
+
+    prov_norm = normalize_provider_name(raw_prov) or raw_prov
+    new_entry: Dict[str, Any] = {"provider": prov_norm}
+    if raw_model.startswith(("auto:", "heuristic:", "criteria:")):
+        new_entry["criteria"] = raw_model
+    else:
+        new_entry["model"] = raw_model
+
     new_ident = _identity(new_entry)
-    primary_entry = _extract_fallback_from_model_cfg(model_before)
-    if primary_entry and _same_deployment(_identity(primary_entry), new_ident):
+    primary_entry = _extract_fallback_from_model_cfg(cfg.get("model"))
+    if new_entry.get("model") and primary_entry and _same_deployment(_identity(primary_entry), new_ident):
         print(f"\n  Selected model matches the current primary ({_format_entry(new_entry)}).")
         print("  A provider cannot be a fallback for itself — no change.")
         return
 
-    final_cfg = load_hermes_config()
-    chain = _read_chain(final_cfg)
-    if any(_same_deployment(_identity(existing), new_ident) for existing in chain):
+    chain = _read_chain(cfg)
+    if new_entry.get("model") and any(_same_deployment(_identity(existing), new_ident) for existing in chain):
         print(f"\n  {_format_entry(new_entry)} is already in the fallback chain — skipped.")
         return
     chain.append(new_entry)
-    _write_chain(final_cfg, chain)
-    save_hermes_config(final_cfg)
+    _write_chain(cfg, chain)
+    save_hermes_config(cfg)
     print(f"\n  Added fallback: {_format_entry(new_entry)}")
     print(f"  Chain is now {_entries(len(chain))} long.\n")
     print("  Run `hermes fallback-heuristic list` to view, or `hermes fallback-heuristic remove` to delete.")
@@ -421,13 +350,21 @@ def cmd_fallback_remove(args) -> None:
             print(f"\n  Index {index_arg} out of range (1..{len(chain)}).")
             return
     else:
-        from hermes_cli.setup import _curses_prompt_choice
+        try:
+            from hermes_cli.setup import prompt_choice
 
-        idx = _curses_prompt_choice(
-            "Select a fallback to remove:",
-            [_format_entry(e) for e in chain] + ["Cancel"],
-            0,
-        )
+            idx = prompt_choice(
+                "Select a fallback to remove:",
+                [_format_entry(e) for e in chain] + ["Cancel"],
+                0,
+            )
+        except Exception:
+            _print_chain("Current fallback chain", chain)
+            try:
+                raw_idx = input(f"  Enter entry number to remove (1..{len(chain)}, or Enter to cancel): ").strip()
+                idx = int(raw_idx) - 1 if raw_idx else -1
+            except (ValueError, KeyboardInterrupt, EOFError):
+                idx = -1
         if idx is None or idx < 0 or idx >= len(chain):
             print("\n  Cancelled — no change.")
             return

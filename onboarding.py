@@ -335,19 +335,31 @@ def check_free_model_providers(
         if model_id not in bucket:
             bucket.append(model_id)
 
-    # 1. Probe models.dev registry for $0 cost models across Hermes providers
+    # 1. Probe models.dev registry (cached on disk or live HTTPS) for $0 cost models
     try:
-        import agent.models_dev as md
+        reg = None
+        cache_path = _get_hermes_home() / "cache" / "models_dev.json"
+        if cache_path.is_file():
+            import json as _json
 
-        reg = md.fetch_models_dev(allow_network=allow_network)
+            raw_cache = _json.loads(cache_path.read_text(encoding="utf-8-sig"))
+            reg = raw_cache.get("data") if isinstance(raw_cache, dict) and "data" in raw_cache else raw_cache
+        elif allow_network:
+            import json as _json
+            import urllib.request as _urlreq
+
+            req = _urlreq.Request(
+                "https://models.dev/api.json",
+                headers={"User-Agent": "hermes-fallback-heuristic/0.2"},
+            )
+            with _urlreq.urlopen(req, timeout=4.0) as resp:
+                reg = _json.loads(resp.read().decode("utf-8"))
         if isinstance(reg, dict):
             for mdev_id, pdata in reg.items():
                 if not isinstance(pdata, dict):
                     continue
-                hermes_ids = md._models_dev_to_hermes_ids(mdev_id)
-                if not hermes_ids and mdev_id in FREE_PROVIDER_CATALOG_META:
-                    hermes_ids = [mdev_id]
-                if not hermes_ids:
+                canon = normalize_provider_name(mdev_id) or mdev_id
+                if canon not in FREE_PROVIDER_CATALOG_META:
                     continue
                 models_dict = pdata.get("models") or {}
                 if not isinstance(models_dict, dict):
@@ -362,60 +374,14 @@ def check_free_model_providers(
                         and cost.get("output") == 0
                     ) or "free" in str(mid).lower()
                     if is_zero:
-                        for hid in hermes_ids:
-                            canon = normalize_provider_name(hid) or hid
-                            _add_free_model(canon, str(mid))
+                        _add_free_model(canon, str(mid))
     except Exception as exc:
         logger.debug("models.dev free provider scan skipped: %s", exc)
 
-    # 2. Probe OpenRouter live/cached metadata for :free and $0 models
-    try:
-        from agent.model_metadata import fetch_model_metadata
-
-        or_meta = fetch_model_metadata(force_refresh=False) if allow_network else {}
-        if isinstance(or_meta, dict):
-            for mid, info in or_meta.items():
-                if not isinstance(info, dict):
-                    continue
-                pricing = info.get("pricing")
-                is_zero = str(mid).endswith(":free") or (
-                    isinstance(pricing, dict)
-                    and str(pricing.get("prompt")) in ("0", "0.0")
-                    and str(pricing.get("completion")) in ("0", "0.0")
-                )
-                if is_zero and "/" in str(mid):
-                    _add_free_model("openrouter", str(mid))
-    except Exception as exc:
-        logger.debug("OpenRouter metadata scan skipped: %s", exc)
-
-    # 3. Probe Nous Portal freeRecommendedModels & Hermes provider_model_ids
-    try:
-        import hermes_cli.models as hm
-
-        if allow_network:
-            try:
-                nous_rec = hm.fetch_nous_recommended_models()
-                for entry in (nous_rec or {}).get("freeRecommendedModels", []):
-                    name = hm._extract_model_name(entry)
-                    if name:
-                        _add_free_model("nous", name)
-            except Exception:
-                pass
-
-        for slug in ("openrouter", "opencode-zen", "opencode-go", "kilocode"):
-            try:
-                for mid in hm.provider_model_ids(slug):
-                    if "free" in str(mid).lower():
-                        _add_free_model(slug, str(mid))
-            except Exception:
-                pass
-    except Exception as exc:
-        logger.debug("hermes_cli.models free scan skipped: %s", exc)
-
-    # 4. Also check our plugin's own candidate resolver & fallback samples so offline mode works 100%
+    # 2. Probe our plugin's own candidate resolver & fallback samples (works 100% offline or online)
     for pid, meta in FREE_PROVIDER_CATALOG_META.items():
         try:
-            for cand in get_candidate_models(provider=pid):
+            for cand in get_candidate_models(provider=pid, force_refresh=False):
                 if cand.is_free or pid == "gemini":
                     _add_free_model(pid, cand.id)
         except Exception:
@@ -571,44 +537,19 @@ def format_first_launch_guide(
 
 
 def save_provider_api_key(env_var: str, api_key: str) -> bool:
-    """Save an API key to ``~/.hermes/.env`` and ``os.environ``."""
-    import os
-
+    """Save an API key solely through Hermes's public ``hermes_cli.config.save_env_value`` helper."""
     key_name = str(env_var or "").strip()
     key_val = str(api_key or "").strip()
     if not key_name or not key_val:
         return False
 
-    os.environ[key_name] = key_val
     try:
         from hermes_cli.config import save_env_value
 
         save_env_value(key_name, key_val)
         return True
-    except Exception:
-        pass
-
-    try:
-        env_path = _get_hermes_home() / ".env"
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-        existing_lines: List[str] = []
-        if env_path.is_file():
-            existing_lines = env_path.read_text(encoding="utf-8").splitlines()
-        updated = False
-        new_lines: List[str] = []
-        for line in existing_lines:
-            stripped = line.strip()
-            if stripped.startswith(f"{key_name}=") or stripped.startswith(f"export {key_name}="):
-                new_lines.append(f"{key_name}={key_val}")
-                updated = True
-            else:
-                new_lines.append(line)
-        if not updated:
-            new_lines.append(f"{key_name}={key_val}")
-        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-        return True
     except Exception as exc:
-        logger.debug("Could not write %s to .env: %s", key_name, exc)
+        logger.debug("save_env_value unavailable for %s: %s", key_name, exc)
         return False
 
 
@@ -659,7 +600,7 @@ def run_interactive_first_launch_wizard(
             if p["provider"] in selected and not p.get("authenticated") and p.get("env_vars")
         ]
         if missing and prompt_for_keys:
-            print("\n  Optional: Paste API keys now to save to ~/.hermes/.env (or press Enter to set later):")
+            print("\n  Optional: Paste API keys now to save via Hermes config (or use `hermes setup` / `hermes auth` later):")
             for mp in missing:
                 env_name = mp["env_vars"][0]
                 print(f"    • {mp['display_name']} — get a free key at: {mp['signup_url']}")
@@ -671,7 +612,9 @@ def run_interactive_first_launch_wizard(
                     if save_provider_api_key(env_name, entered_key):
                         saved_keys.append(env_name)
                         mp["authenticated"] = True
-                        print(f"      ✓ Saved {env_name} to ~/.hermes/.env")
+                        print(f"      ✓ Saved {env_name} via Hermes config")
+                    else:
+                        print(f"      ! Could not save {env_name} automatically; run `hermes setup` or `hermes auth`.")
 
         settings = mark_first_launch_done(selected_providers=selected, config=cfg, save=True)
         print(f"\n  ✓ Saved preferred fallback providers: {', '.join(settings.get('providers', []))}")
@@ -681,7 +624,7 @@ def run_interactive_first_launch_wizard(
             if not p.get("authenticated")
         ]
         if still_missing:
-            print("\n  Whenever you're ready, set your API keys for the remaining providers:")
+            print("\n  Whenever you're ready, configure credentials via `hermes setup` / `hermes auth`, or set:")
             for mp in still_missing:
                 env_name = mp["env_vars"][0]
                 print(f"    • {mp['display_name']}: create key at {mp['signup_url']}")

@@ -79,7 +79,7 @@ DEFAULT_HEURISTIC_SETTINGS: dict[str, Any] = {
     "reasoning_effort": "",
     "max_candidates": 3,
     "auto_sync_config": True,
-    "auto_switch_primary_when_unavailable": True,
+    "auto_switch_primary_when_unavailable": False,
     "first_launch_completed": False,
 }
 
@@ -92,12 +92,7 @@ def _normalized_base_url(value: Any) -> str:
 
 def _normalize_provider_id(value: str) -> str:
     """Collapse provider aliases to the canonical id."""
-    try:
-        from hermes_cli.providers import normalize_provider
-
-        return normalize_provider(value)
-    except Exception:
-        return normalize_provider_name(value) or value.lower()
+    return normalize_provider_name(value) or value.lower()
 
 
 def load_hermes_config() -> dict[str, Any]:
@@ -114,10 +109,8 @@ def load_hermes_config() -> dict[str, Any]:
     try:
         cfg_path = _get_hermes_home() / "config.yaml"
         if cfg_path.is_file():
-            try:
-                import hermes_yaml as yaml
-            except ImportError:
-                import yaml  # type: ignore[no-redef]
+            import yaml
+
             loaded = yaml.safe_load(cfg_path.read_text(encoding="utf-8-sig"))
             if isinstance(loaded, dict):
                 return loaded
@@ -139,10 +132,8 @@ def save_hermes_config(config: dict[str, Any]) -> None:
     try:
         cfg_path = _get_hermes_home() / "config.yaml"
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            import hermes_yaml as yaml
-        except ImportError:
-            import yaml  # type: ignore[no-redef]
+        import yaml
+
         content = yaml.safe_dump(config, sort_keys=False, allow_unicode=True)
         cfg_path.write_text(content, encoding="utf-8")
     except Exception as exc:
@@ -894,14 +885,13 @@ def switch_model_with_heuristic(
     exclude_current: bool = False,
     exclude_providers: tuple[str, ...] | list[str] = (),
     exclude_models: tuple[str, ...] | list[str] = (),
-    agent: Any = None,
 ) -> Optional[dict[str, Any]]:
-    """Switch the user's active primary model (and provider) using the heuristic across existing providers.
+    """Switch the user's configured model (and provider) using the heuristic across existing providers.
 
     Works completely without a model call:
     - Updates ``model.provider`` and ``model.default`` in ``config.yaml``
     - Populates ``fallback_providers`` with the next-best heuristic candidates
-    - Optionally updates a live ``AIAgent`` instance if provided
+    - Does NOT mutate live ``AIAgent`` private state; live session switching uses ``/model`` or ``llm_request`` middleware.
     """
     effective_criteria = criteria if criteria is not None else criteria_or_overrides
     effective_save = persist if persist is not None else save
@@ -946,17 +936,6 @@ def switch_model_with_heuristic(
         exclude_models=[*excl_models, new_model],
     )
 
-    if agent is not None:
-        try:
-            agent.model = new_model
-            agent.provider = new_provider
-            agent.requested_provider = new_provider
-            if hasattr(agent, "_fallback_chain"):
-                agent._fallback_chain = list(cfg.get("fallback_providers") or [])
-                agent._fallback_index = 0
-        except Exception as exc:
-            logger.debug("Live agent update after heuristic switch skipped: %s", exc)
-
     return {
         "ok": True,
         "previous_provider": old_provider,
@@ -966,6 +945,7 @@ def switch_model_with_heuristic(
         "provider_switched": old_provider != new_provider,
         "criteria_matched": chosen.get("criteria_matched", ""),
         "fallback_chain": cfg.get("fallback_providers", []),
+        "switch_command_hint": f"/model {new_provider}/{new_model}",
     }
 
 
@@ -975,13 +955,13 @@ def ensure_available_model_or_fallback(
     save: bool = True,
     failed_provider: Optional[str] = None,
     failed_model: Optional[str] = None,
-    agent: Any = None,
+    auto_switch_primary_when_unavailable: Optional[bool] = None,
 ) -> dict[str, Any]:
-    """Ensure the orchestrator has a valid model and fallback chain from existing providers.
+    """Ensure the orchestrator has a valid fallback chain from existing providers.
 
-    If the selected primary model/provider is unavailable (or matches ``failed_provider``/``failed_model``)
-    and ``auto_switch_primary_when_unavailable`` is enabled, switches the primary model/provider
-    using the heuristic. Always ensures ``fallback_providers`` is populated with available routes.
+    Always populates ``fallback_providers`` in ``config.yaml`` with available routes.
+    Only rewrites ``model.provider`` / ``model.default`` when the user has explicitly opted in
+    via ``auto_switch_primary_when_unavailable: true``.
     """
     cfg = config if isinstance(config, dict) else load_hermes_config()
     settings = get_plugin_settings(cfg)
@@ -1008,14 +988,18 @@ def ensure_available_model_or_fallback(
         )
     )
 
-    if primary_unavailable and settings.get("auto_switch_primary_when_unavailable", True):
+    should_switch_primary = (
+        auto_switch_primary_when_unavailable
+        if auto_switch_primary_when_unavailable is not None
+        else bool(settings.get("auto_switch_primary_when_unavailable", False))
+    )
+    if primary_unavailable and should_switch_primary:
         switched = switch_model_with_heuristic(
             config=cfg,
             save=save,
             exclude_current=bool(primary_model),
             exclude_providers=excl_provs,
             exclude_models=excl_models,
-            agent=agent,
         )
         if switched is not None:
             return {
@@ -1030,11 +1014,6 @@ def ensure_available_model_or_fallback(
         exclude_providers=excl_provs,
         exclude_models=excl_models,
     )
-    if agent is not None and hasattr(agent, "_fallback_chain"):
-        try:
-            agent._fallback_chain = list(chain)
-        except Exception:
-            pass
 
     return {
         "status": "synced_fallbacks",

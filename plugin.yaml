@@ -108,8 +108,8 @@ config_schema:
     description: "Automatically materialize resolved heuristic candidates into fallback_providers in config.yaml so Hermes Core uses them even before a model call."
   auto_switch_primary_when_unavailable:
     type: bool
-    default: true
-    description: "Automatically resolve a replacement model from existing providers when the selected primary model or provider is unavailable."
+    default: false
+    description: "Automatically rewrite model.provider and model.default in config.yaml when the selected primary model or provider is unavailable (opt-in; default false so hooks only update fallback_providers)."
   first_launch_completed:
     type: bool
     default: false

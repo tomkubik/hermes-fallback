@@ -293,10 +293,8 @@ def _load_active_config(config: Optional[dict[str, Any]] = None) -> dict[str, An
     try:
         cfg_path = _get_hermes_home() / "config.yaml"
         if cfg_path.is_file():
-            try:
-                import hermes_yaml as yaml
-            except ImportError:
-                import yaml  # type: ignore[no-redef]
+            import yaml
+
             raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8-sig"))
             if isinstance(raw, dict):
                 return raw
@@ -312,8 +310,8 @@ def discover_existing_providers(
     """Discover all existing (authenticated or configured) model providers on this system.
 
     Works completely without a model call by inspecting:
-    1. Hermes's ``list_authenticated_providers`` / ``get_auth_status`` (OAuth, credential pool, auth store)
-    2. Environment variables for provider API keys (``OPENROUTER_API_KEY``, ``ANTHROPIC_API_KEY``, etc.)
+    1. Environment variables / Hermes secret_scope for provider API keys
+    2. Read-only OAuth / portal session entries in ``~/.hermes/auth.json`` if present
     3. ``config.yaml`` (``model.provider``, ``providers``, ``custom_providers``, ``fallback_providers``)
     """
     cfg = _load_active_config(config)
@@ -330,29 +328,27 @@ def discover_existing_providers(
     if isinstance(model_cfg, dict):
         primary_provider = normalize_provider_name(model_cfg.get("provider"))
 
-    # 2. Query Hermes Core's authenticated provider discovery when available
+    # 2. Read-only check of ~/.hermes/auth.json for logged-in OAuth/portal providers
     try:
-        from hermes_cli.model_switch_providers import list_authenticated_providers
-
-        for entry in list_authenticated_providers(cfg) or []:
-            if isinstance(entry, dict) and entry.get("id"):
-                _add(str(entry["id"]))
+        auth_file = _get_hermes_home() / "auth.json"
+        if auth_file.is_file():
+            store = json.loads(auth_file.read_text(encoding="utf-8-sig"))
+            if isinstance(store, dict):
+                active_p = store.get("active_provider")
+                if isinstance(active_p, str) and active_p.strip():
+                    _add(active_p)
+                providers_store = store.get("providers")
+                if isinstance(providers_store, dict):
+                    for pid, pdata in providers_store.items():
+                        if isinstance(pdata, dict) and (
+                            pdata.get("access_token")
+                            or pdata.get("api_key")
+                            or pdata.get("token")
+                            or pdata.get("logged_in")
+                        ):
+                            _add(pid)
     except Exception as exc:
-        logger.debug("list_authenticated_providers probe skipped: %s", exc)
-
-    # 3. Check Hermes auth status for OAuth / portal providers (nous, openai-codex, copilot, anthropic)
-    try:
-        from hermes_cli.auth import get_auth_status
-
-        for pid in ("nous", "openai-codex", "copilot", "anthropic"):
-            try:
-                st = get_auth_status(pid)
-                if isinstance(st, dict) and st.get("logged_in"):
-                    _add(pid)
-            except Exception:
-                pass
-    except Exception:
-        pass
+        logger.debug("Read-only auth.json inspection skipped: %s", exc)
 
     # 4. Check environment variables for provider API keys
     for pid, env_keys in PROVIDER_ENV_VARS.items():
@@ -1608,77 +1604,87 @@ def _enrich_from_raw_item(meta: ModelCandidateMetadata, model_id: str, raw_item:
 
 
 def _enrich_from_openrouter_cache(meta: ModelCandidateMetadata, model_id: str) -> None:
-    """Query cached OpenRouter metadata catalog."""
+    """Query cached OpenRouter metadata catalog on disk if available."""
     try:
-        from agent.model_metadata import fetch_model_metadata
-
-        catalog = fetch_model_metadata()
-        entry = catalog.get(model_id) or catalog.get(model_id.split("/", 1)[-1])
-        if isinstance(entry, dict):
-            meta.name = str(entry.get("name") or model_id)
-            if entry.get("context_length"):
-                try:
-                    meta.context_window = int(entry["context_length"])
-                except (ValueError, TypeError):
-                    pass
-            pricing = entry.get("pricing")
-            if isinstance(pricing, dict):
-                try:
-                    prompt_cost = float(pricing.get("prompt", 0) or 0)
-                    comp_cost = float(pricing.get("completion", 0) or 0)
-                    if prompt_cost == 0 and comp_cost == 0:
-                        meta.is_free = True
-                except (ValueError, TypeError):
-                    pass
-            params = entry.get("supported_parameters")
-            if isinstance(params, list):
-                meta.supports_tools = "tools" in params
-            elif entry.get("tools") is not None:
-                meta.supports_tools = bool(entry.get("tools"))
-            meta.source = "openrouter_cache"
+        cache_dir = _get_hermes_home() / "cache"
+        for fname in ("openrouter_models.json", "model_metadata.json"):
+            fpath = cache_dir / fname
+            if not fpath.is_file():
+                continue
+            raw = json.loads(fpath.read_text(encoding="utf-8-sig"))
+            catalog = raw.get("models") if isinstance(raw, dict) and isinstance(raw.get("models"), dict) else raw
+            if not isinstance(catalog, dict):
+                continue
+            entry = catalog.get(model_id) or catalog.get(model_id.split("/", 1)[-1])
+            if isinstance(entry, dict):
+                meta.name = str(entry.get("name") or model_id)
+                if entry.get("context_length"):
+                    try:
+                        meta.context_window = int(entry["context_length"])
+                    except (ValueError, TypeError):
+                        pass
+                pricing = entry.get("pricing")
+                if isinstance(pricing, dict):
+                    try:
+                        prompt_cost = float(pricing.get("prompt", 0) or 0)
+                        comp_cost = float(pricing.get("completion", 0) or 0)
+                        if prompt_cost == 0 and comp_cost == 0:
+                            meta.is_free = True
+                    except (ValueError, TypeError):
+                        pass
+                params = entry.get("supported_parameters")
+                if isinstance(params, list):
+                    meta.supports_tools = "tools" in params
+                elif entry.get("tools") is not None:
+                    meta.supports_tools = bool(entry.get("tools"))
+                meta.source = "openrouter_cache"
+                break
     except Exception as exc:
         logger.debug("OpenRouter cache lookup failed for %s: %s", model_id, exc, exc_info=True)
 
 
 def _enrich_from_nous_pricing(meta: ModelCandidateMetadata, model_id: str) -> None:
-    """Query Nous Portal pricing tables."""
+    """Enrich Nous Portal models from cached catalog or slug heuristics."""
     try:
-        from hermes_cli.models import _is_model_free
-        from hermes_cli import models_pricing as mp
-
-        pricing = mp.get_pricing_for_provider("nous") or {}
-        entry = pricing.get(model_id)
-        if isinstance(entry, dict):
-            if (
-                entry.get("tools") is not False
-                and not entry.get("generation")
-                and not model_id.startswith(
-                    ("voyageai/", "sentence-transformers/", "thenlper/", "baai/", "intfloat/")
-                )
-            ):
-                meta.supports_tools = True
-            meta.source = "nous_pricing"
-        if _is_model_free(model_id, pricing):
+        if is_free_model_slug(model_id):
             meta.is_free = True
+        if not model_id.startswith(
+            ("voyageai/", "sentence-transformers/", "thenlper/", "baai/", "intfloat/")
+        ):
+            meta.supports_tools = True
     except Exception as exc:
         logger.debug("Nous pricing lookup failed for %s: %s", model_id, exc, exc_info=True)
 
 
 def _enrich_from_models_dev(meta: ModelCandidateMetadata, model_id: str, provider: str) -> None:
-    """Query models.dev static registry for context and release date."""
+    """Query cached models.dev JSON registry on disk for context and release date."""
     try:
-        from agent.models_dev import get_model_info
-
-        m_info = get_model_info(provider, model_id)
-        if m_info is not None:
-            if m_info.name:
-                meta.name = m_info.name
-            if m_info.context_window and m_info.context_window > meta.context_window:
-                meta.context_window = m_info.context_window
-            if m_info.release_date:
-                meta.release_date = m_info.release_date
+        mdev_path = _get_hermes_home() / "cache" / "models_dev.json"
+        if not mdev_path.is_file():
+            return
+        raw = json.loads(mdev_path.read_text(encoding="utf-8-sig"))
+        data = raw.get("data") if isinstance(raw, dict) and isinstance(raw.get("data"), dict) else raw
+        if not isinstance(data, dict):
+            return
+        prov_block = data.get(provider)
+        if not isinstance(prov_block, dict):
+            return
+        models_dict = prov_block.get("models")
+        if not isinstance(models_dict, dict):
+            return
+        m_info = models_dict.get(model_id) or models_dict.get(model_id.split("/", 1)[-1])
+        if isinstance(m_info, dict):
+            if m_info.get("name"):
+                meta.name = str(m_info["name"])
+            limit_block = m_info.get("limit") if isinstance(m_info.get("limit"), dict) else {}
+            ctx_val = limit_block.get("context") or m_info.get("context_window") or 0
+            if isinstance(ctx_val, (int, float)) and int(ctx_val) > meta.context_window:
+                meta.context_window = int(ctx_val)
+            rel_date = str(m_info.get("release_date") or "").strip()
+            if rel_date:
+                meta.release_date = rel_date
                 try:
-                    parts = [int(p) for p in m_info.release_date.split("-") if p.isdigit()]
+                    parts = [int(p) for p in rel_date.split("-") if p.isdigit()]
                     if len(parts) >= 3:
                         dt = datetime.datetime(
                             parts[0], parts[1], parts[2], tzinfo=datetime.timezone.utc
@@ -1686,14 +1692,52 @@ def _enrich_from_models_dev(meta: ModelCandidateMetadata, model_id: str, provide
                         meta.created_ts = dt.timestamp()
                 except (ValueError, TypeError):
                     pass
-            if m_info.has_cost_data() and m_info.cost_input == 0 and m_info.cost_output == 0:
+            cost_block = m_info.get("cost") if isinstance(m_info.get("cost"), dict) else {}
+            if (
+                "input" in cost_block
+                and "output" in cost_block
+                and float(cost_block.get("input") or 0) == 0
+                and float(cost_block.get("output") or 0) == 0
+            ):
                 meta.is_free = True
-            if m_info.tool_call is not None:
-                meta.supports_tools = m_info.tool_call
+            if m_info.get("tool_call") is not None:
+                meta.supports_tools = bool(m_info["tool_call"])
             if meta.source == "heuristic":
                 meta.source = "models_dev"
     except Exception as exc:
         logger.debug("models.dev lookup failed for %s: %s", model_id, exc, exc_info=True)
+
+
+_DEFAULT_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-opus-4-6": 1000000,
+    "claude-sonnet-4-6": 1000000,
+    "claude-": 200000,
+    "gpt-5.4": 1048576,
+    "gpt-5": 400000,
+    "gpt-4.1": 1047576,
+    "gpt-4o": 128000,
+    "o3": 200000,
+    "o4-mini": 200000,
+    "gemini-3.1-pro": 2097152,
+    "gemini-": 1048576,
+    "deepseek-": 128000,
+    "glm-5": 200000,
+    "glm-4.7": 200000,
+    "glm-4.5": 128000,
+    "kimi-k2": 262144,
+    "minimax-m2": 1000000,
+    "grok-4-fast": 2000000,
+    "grok-4": 256000,
+    "grok-3": 131072,
+    "qwen3-coder-plus": 1000000,
+    "qwen3.5-plus": 1000000,
+    "qwen3": 131072,
+    "llama-3.3": 131072,
+    "llama-3.1": 131072,
+    "nemotron": 131072,
+    "mistral-small-3": 131072,
+    "mimo-v2": 131072,
+}
 
 
 def enrich_model_metadata(
@@ -1738,36 +1782,12 @@ def enrich_model_metadata(
             meta.supports_tools = True
 
     if meta.context_window <= 0:
-        try:
-            from agent.model_metadata import (
-                DEFAULT_CONTEXT_LENGTHS,
-                _config_override_context_length,
-                _longest_key_match,
-                _resolve_endpoint_context_length,
-                _resolve_provider_aware_context_length,
-            )
-
-            ctx = _config_override_context_length(model_id, base_url, provider_norm, None)
-            if ctx is None and base_url:
-                ctx = _resolve_endpoint_context_length(model_id, base_url)
-            if ctx is None:
-                ctx = _resolve_provider_aware_context_length(
-                    model_id, base_url, "", provider_norm, provider_norm
-                )
-            if ctx is None:
-                hit = _longest_key_match(DEFAULT_CONTEXT_LENGTHS, model_id.lower())
-                if hit:
-                    ctx = hit[1]
-            if ctx and ctx > 0:
-                meta.context_window = ctx
-        except Exception as exc:
-            logger.debug(
-                "Context length positive resolution failed for %s (%s): %s",
-                model_id,
-                provider_norm,
-                exc,
-                exc_info=True,
-            )
+        lower_id = model_id.lower()
+        best_prefix_len = 0
+        for prefix, ctx_len in _DEFAULT_CONTEXT_WINDOWS.items():
+            if prefix in lower_id and len(prefix) > best_prefix_len:
+                meta.context_window = ctx_len
+                best_prefix_len = len(prefix)
 
     return meta
 
@@ -1791,21 +1811,20 @@ def _gather_nous_candidates(
     """Gather candidates for Nous Research Portal."""
     candidates_by_id: dict[str, ModelCandidateMetadata] = {}
     try:
-        from hermes_cli import models_pricing as mp
-        from hermes_cli.models import _is_model_free, provider_model_ids
-
-        mids = list(provider_model_ids("nous", force_refresh=force_refresh) or [])
-        pricing = mp.get_pricing_for_provider("nous") or {}
-        for mid in pricing:
-            if mid not in mids and _is_model_free(mid, pricing):
-                mids.append(mid)
-        for mid in mids:
-            cand = enrich_model_metadata(mid, provider="nous")
-            if _is_model_free(mid, pricing):
-                cand.is_free = True
-            candidates_by_id[mid] = cand
+        cat_path = _get_hermes_home() / "cache" / "model_catalog.json"
+        if cat_path.is_file():
+            data = json.loads(cat_path.read_text(encoding="utf-8-sig"))
+            m_list = data.get("providers", {}).get("nous", {}).get("models", [])
+            for item in m_list:
+                mid = str(item.get("id") if isinstance(item, dict) else item or "").strip()
+                if mid:
+                    cand = enrich_model_metadata(mid, provider="nous")
+                    if is_free_model_slug(mid):
+                        cand.is_free = True
+                        cand.supports_tools = True
+                    candidates_by_id[mid] = cand
     except Exception as exc:
-        logger.debug("Nous catalog probe failed in fallback heuristics: %s", exc, exc_info=True)
+        logger.debug("Nous disk catalog probe failed in fallback heuristics: %s", exc, exc_info=True)
 
     if not candidates_by_id:
         for mid in _BUILTIN_PROVIDER_CATALOGS.get("nous", ()):
@@ -1821,17 +1840,16 @@ def _gather_nous_candidates(
 def _load_openrouter_live_catalog(provider_norm: str) -> dict[str, ModelCandidateMetadata]:
     candidates_by_id: dict[str, ModelCandidateMetadata] = {}
     try:
-        from hermes_cli.models import (
-            _OPENROUTER_CATALOG_URL,
-            _fetch_live_catalog_index,
-            _urlopen_model_catalog_request,
-        )
+        import urllib.request
 
-        live = _fetch_live_catalog_index(
-            _OPENROUTER_CATALOG_URL, 6.0, _urlopen_model_catalog_request
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/models",
+            headers={"Accept": "application/json", "User-Agent": "hermes-fallback-plugin/1.0"},
         )
-        if live is not None:
-            live_items, _ = live
+        with urllib.request.urlopen(req, timeout=6.0) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+        live_items = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(live_items, list):
             for item in live_items:
                 if isinstance(item, dict):
                     mid = str(item.get("id") or "").strip()
@@ -1846,12 +1864,7 @@ def _load_openrouter_live_catalog(provider_norm: str) -> dict[str, ModelCandidat
 
 def _load_openrouter_static_catalog(provider_norm: str) -> dict[str, ModelCandidateMetadata]:
     candidates_by_id: dict[str, ModelCandidateMetadata] = {}
-    try:
-        from hermes_cli.models_catalog_static import OPENROUTER_MODELS
-
-        source_models = list(OPENROUTER_MODELS)
-    except Exception:
-        source_models = list(_BUILTIN_OPENROUTER_STATIC)
+    source_models = list(_BUILTIN_OPENROUTER_STATIC)
 
     for mid, desc in source_models:
         cand = enrich_model_metadata(mid, provider=provider_norm)
@@ -1962,34 +1975,25 @@ def _gather_generic_candidates(
     if provider_norm.startswith("custom:"):
         candidates_by_id.update(_gather_custom_provider_candidates(provider_norm, base_url=base_url))
 
-    # 2. Hermes Core provider_model_ids (queries live/cached provider endpoints & models.dev)
+    # 2. Cached models.dev or model_catalog.json on disk
     try:
-        from hermes_cli.models import provider_model_ids
-
-        model_ids = provider_model_ids(provider_norm, force_refresh=force_refresh) or []
-        for mid in model_ids:
-            if mid and mid not in candidates_by_id:
-                candidates_by_id[mid] = enrich_model_metadata(
-                    mid, provider=provider_norm, base_url=base_url
-                )
+        mdev_path = _get_hermes_home() / "cache" / "models_dev.json"
+        if mdev_path.is_file():
+            raw = json.loads(mdev_path.read_text(encoding="utf-8-sig"))
+            data = raw.get("data") if isinstance(raw, dict) and isinstance(raw.get("data"), dict) else raw
+            if isinstance(data, dict):
+                prov_block = data.get(provider_norm)
+                models_dict = prov_block.get("models") if isinstance(prov_block, dict) else None
+                if isinstance(models_dict, dict):
+                    for mid in models_dict:
+                        if mid and mid not in candidates_by_id:
+                            candidates_by_id[mid] = enrich_model_metadata(
+                                mid, provider=provider_norm, base_url=base_url
+                            )
     except Exception as exc:
-        logger.debug("Generic provider model probe failed: %s", exc, exc_info=True)
+        logger.debug("Generic provider disk cache probe failed: %s", exc, exc_info=True)
 
-    # 3. Hermes static _PROVIDER_MODELS table
-    if not candidates_by_id:
-        try:
-            from hermes_cli.models_catalog_static import _PROVIDER_MODELS
-
-            static_list = _PROVIDER_MODELS.get(provider_norm, [])
-            for mid in static_list:
-                if mid and mid not in candidates_by_id:
-                    candidates_by_id[mid] = enrich_model_metadata(
-                        mid, provider=provider_norm, base_url=base_url
-                    )
-        except Exception as exc:
-            logger.debug("Static provider model fallback failed: %s", exc, exc_info=True)
-
-    # 4. Built-in cross-provider catalog (works 100% offline / outside Hermes checkout)
+    # 3. Built-in cross-provider catalog (works 100% offline / outside Hermes checkout)
     if not candidates_by_id and provider_norm in _BUILTIN_PROVIDER_CATALOGS:
         for mid in _BUILTIN_PROVIDER_CATALOGS[provider_norm]:
             if mid and mid not in candidates_by_id:
@@ -1997,7 +2001,7 @@ def _gather_generic_candidates(
                     mid, provider=provider_norm, base_url=base_url
                 )
 
-    # 5. Also check custom config definitions for non-prefixed named providers
+    # 4. Also check custom config definitions for non-prefixed named providers
     if not candidates_by_id:
         candidates_by_id.update(_gather_custom_provider_candidates(provider_norm, base_url=base_url))
 

@@ -128,13 +128,9 @@ def resolve_fallback_entry_reasoning_config(
 
 
 def reresolve_fallback_reasoning_config(
-    agent: Any, fallback_entry: Optional[Dict[str, Any]] = None
-) -> None:
-    """Resolve and update reasoning_config on agent for an activated fallback model."""
-    agent._reasoning_effort_rejected = False
-    agent._reasoning_disable_rejected = False
-    agent._reasoning_floor_required = False
-
+    target: Any, fallback_entry: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
+    """Resolve reasoning_config for an activated fallback model."""
     try:
         try:
             from hermes_cli.config import load_config
@@ -142,16 +138,19 @@ def reresolve_fallback_reasoning_config(
             cfg = load_config() or {}
         except Exception:
             cfg = {}
-        resolved = resolve_fallback_entry_reasoning_config(cfg, agent.model, fallback_entry)
-        agent.reasoning_config = resolved
-        logger.info("Fallback %s: reasoning_config resolved: %s", agent.model, resolved)
+        model_id = str(getattr(target, "model", None) or (fallback_entry or {}).get("model") or "")
+        resolved = resolve_fallback_entry_reasoning_config(cfg, model_id, fallback_entry)
+        if hasattr(target, "reasoning_config"):
+            target.reasoning_config = resolved
+        logger.info("Fallback %s: reasoning_config resolved: %s", model_id, resolved)
+        return resolved
     except Exception as _reasoning_err:
         logger.debug(
-            "Failed to resolve reasoning_config for fallback %s; keeping current: %s",
-            agent.model,
+            "Failed to resolve reasoning_config for fallback: %s",
             _reasoning_err,
             exc_info=True,
         )
+        return None
 
 
 def format_fallback_label(entry: Dict[str, Any]) -> str:
@@ -168,6 +167,23 @@ def format_fallback_label(entry: Dict[str, Any]) -> str:
     return lbl
 
 
+def _format_fallback_reason(reason: Any) -> str:
+    """Format a fallback trigger reason into user-readable text without private imports."""
+    raw = str(getattr(reason, "value", None) or reason or "provider failure").strip().lower()
+    mapping = {
+        "rate_limit": "rate limit",
+        "ratelimit": "rate limit",
+        "quota": "quota or billing limit",
+        "billing": "quota or billing limit",
+        "auth": "authentication error",
+        "overloaded": "provider overloaded",
+        "server_error": "server error",
+        "timeout": "request timeout",
+        "model_not_found": "model unavailable",
+    }
+    return mapping.get(raw, raw.replace("_", " "))
+
+
 def format_fallback_notice(
     old_model: str,
     old_provider: str,
@@ -179,14 +195,7 @@ def format_fallback_notice(
     remaining_seconds: int = 0,
 ) -> str:
     """Format user-visible one-shot notice when falling back during a turn."""
-    try:
-        from agent.chat_completion_helpers import _fallback_reason_text
-
-        reason_str = _fallback_reason_text(reason)
-    except Exception:
-        reason_str = str(getattr(reason, "value", None) or reason or "provider failure").replace(
-            "_", " "
-        )
+    reason_str = _format_fallback_reason(reason)
     criteria_info = ""
     if fb.get("criteria_matched"):
         rank_str = f" #{fb['criteria_rank']}" if fb.get("criteria_rank") else ""
