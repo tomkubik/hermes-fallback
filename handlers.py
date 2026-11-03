@@ -205,6 +205,7 @@ def handle_switch(args: dict[str, Any], **kwargs: Any) -> str:
     """Handler for ``fallback_heuristic_switch`` tool."""
     try:
         cfg = load_hermes_config()
+        persist_primary = bool(kwargs.get("_persist_primary", False))
         exclude_current = bool(args.get("exclude_current", False))
         excl_provs = list(parse_provider_list(args.get("exclude_providers"))) + list(
             _SESSION_UNAVAILABLE_PROVIDERS
@@ -245,6 +246,7 @@ def handle_switch(args: dict[str, Any], **kwargs: Any) -> str:
             overrides if overrides else None,
             config=cfg,
             save=True,
+            persist_primary=persist_primary,
             exclude_current=exclude_current,
             exclude_providers=excl_provs,
             exclude_models=excl_models,
@@ -374,10 +376,13 @@ def handle_configure(args: dict[str, Any], **kwargs: Any) -> str:
                 "name_filter",
                 "reasoning_effort",
                 "max_candidates",
-                "auto_switch_primary_when_unavailable",
             )
         ):
-            updates = {k: v for k, v in args.items() if k != "action" and v is not None}
+            updates = {
+                k: v
+                for k, v in args.items()
+                if k not in ("action", "auto_switch_primary_when_unavailable") and v is not None
+            }
             settings = update_plugin_settings(updates, config=cfg, save=True)
         else:
             settings = get_plugin_settings(cfg)
@@ -826,7 +831,7 @@ def handle_slash_command(raw_args: str = "") -> str:
         kv, pos = _parse_key_value_tokens(rest)
         if pos and "heuristic" not in kv and "sort_by" not in kv:
             kv["heuristic"] = " ".join(pos)
-        payload = json.loads(handle_switch(kv))
+        payload = json.loads(handle_switch(kv, _persist_primary=True))
         if not payload.get("ok"):
             return f"✗ Could not switch model: {payload.get('error')}"
         return (

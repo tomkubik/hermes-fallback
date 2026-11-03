@@ -279,7 +279,10 @@ class TestMultiProviderDiscoveryAndHeuristics(unittest.TestCase):
             "DEEPSEEK_API_KEY": "ds-test",
             "NOUS_API_KEY": "nous-test",
         }
-        with patch.dict(os.environ, fake_env, clear=True):
+        fake_secret_scope = SimpleNamespace(get_secret=lambda k: os.environ.get(k, ""))
+        with patch.dict(os.environ, fake_env, clear=True), patch.dict(
+            sys.modules, {"agent.secret_scope": fake_secret_scope}
+        ):
             provs = discover_existing_providers(config=cfg)
             self.assertEqual(provs[0], "anthropic")
             self.assertIn("openrouter", provs)
@@ -493,6 +496,43 @@ class TestZeroLLMCallSettingsSyncAndSwitch(unittest.TestCase):
             self.assertNotEqual(cfg["model"]["default"], "gpt-unavailable-999")
             self.assertTrue(str(res_opt_in.get("switch_command_hint", "")).startswith("/model "))
             self.assertTrue(len(cfg.get("fallback_providers") or []) >= 1)
+
+    def test_model_callable_tools_do_not_persist_primary_or_toggle_auto_switch(self):
+        from schemas import FALLBACK_HEURISTIC_CONFIGURE_SCHEMA
+
+        self.assertNotIn(
+            "auto_switch_primary_when_unavailable",
+            FALLBACK_HEURISTIC_CONFIGURE_SCHEMA["parameters"]["properties"],
+        )
+
+        cfg = {
+            "model": {"provider": "anthropic", "default": "claude-sonnet-4-5-20250929"},
+        }
+        with patch("handlers.load_hermes_config", return_value=cfg), patch(
+            "config_sync.load_hermes_config", return_value=cfg
+        ), patch("config_sync.save_hermes_config"), patch(
+            "config_sync.discover_existing_providers", return_value=["anthropic", "gemini"]
+        ), patch(
+            "heuristics.discover_existing_providers", return_value=["anthropic", "gemini"]
+        ):
+            raw_sw = handle_switch({"provider": "gemini", "sort_by": "greatest_context"})
+            sw_res = json.loads(raw_sw)
+            self.assertTrue(sw_res["ok"])
+            self.assertEqual(sw_res["provider"], "gemini")
+            self.assertFalse(sw_res["primary_persisted"])
+            self.assertTrue(sw_res["switch_command_hint"].startswith("/model gemini/"))
+            # Primary model in config.yaml remains unchanged
+            self.assertEqual(cfg["model"]["provider"], "anthropic")
+            self.assertEqual(cfg["model"]["default"], "claude-sonnet-4-5-20250929")
+            self.assertTrue(len(cfg.get("fallback_providers") or []) >= 1)
+
+            # Model-callable configure tool ignores auto_switch_primary_when_unavailable
+            raw_cfg = handle_configure(
+                {"action": "set", "auto_switch_primary_when_unavailable": True}
+            )
+            cfg_res = json.loads(raw_cfg)
+            self.assertTrue(cfg_res["ok"])
+            self.assertFalse(cfg_res["settings"]["auto_switch_primary_when_unavailable"])
 
     def test_slash_commands_work_without_llm_call(self):
         cfg = {

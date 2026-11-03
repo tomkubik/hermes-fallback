@@ -96,59 +96,26 @@ def _normalize_provider_id(value: str) -> str:
 
 
 def load_hermes_config() -> dict[str, Any]:
-    """Load config.yaml via hermes_cli.config.load_config or direct YAML fallback."""
+    """Load config.yaml via hermes_cli.config.load_config."""
     try:
         from hermes_cli.config import load_config
 
         cfg = load_config()
         if isinstance(cfg, dict):
             return cfg
-    except Exception:
-        pass
-
-    try:
-        cfg_path = _get_hermes_home() / "config.yaml"
-        if cfg_path.is_file():
-            import yaml
-
-            loaded = yaml.safe_load(cfg_path.read_text(encoding="utf-8-sig"))
-            if isinstance(loaded, dict):
-                return loaded
     except Exception as exc:
-        logger.debug("Fallback config.yaml read failed: %s", exc)
+        logger.debug("load_config failed: %s", exc)
     return {}
 
 
 def save_hermes_config(config: dict[str, Any]) -> None:
-    """Save config.yaml via hermes_cli.config.save_config or direct YAML fallback."""
+    """Save config.yaml via hermes_cli.config.save_config."""
     try:
         from hermes_cli.config import save_config
 
         save_config(config)
-        return
-    except Exception:
-        pass
-
-    try:
-        cfg_path = _get_hermes_home() / "config.yaml"
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        import yaml
-
-        content = yaml.safe_dump(config, sort_keys=False, allow_unicode=True)
-        cfg_path.write_text(content, encoding="utf-8")
     except Exception as exc:
-        logger.warning("Failed to write config.yaml: %s", exc)
-
-
-def resolve_entry_api_key(entry: dict[str, Any] | None) -> str | None:
-    """API key for one fallback entry: inline ``api_key``, else ``key_env``."""
-    if not isinstance(entry, dict):
-        return None
-    if inline := str(entry.get("api_key") or "").strip():
-        return inline
-    if key_env := str(entry.get("key_env") or entry.get("api_key_env") or "").strip():
-        return _read_secret_or_env(key_env) or None
-    return None
+        logger.warning("Failed to save config via hermes_cli.config.save_config: %s", exc)
 
 
 def effective_runtime_provider(
@@ -882,16 +849,19 @@ def switch_model_with_heuristic(
     config: Optional[dict[str, Any]] = None,
     save: bool = True,
     persist: Optional[bool] = None,
+    persist_primary: bool = True,
     exclude_current: bool = False,
     exclude_providers: tuple[str, ...] | list[str] = (),
     exclude_models: tuple[str, ...] | list[str] = (),
 ) -> Optional[dict[str, Any]]:
-    """Switch the user's configured model (and provider) using the heuristic across existing providers.
+    """Switch or resolve the user's model (and provider) using the heuristic across existing providers.
 
     Works completely without a model call:
-    - Updates ``model.provider`` and ``model.default`` in ``config.yaml``
-    - Populates ``fallback_providers`` with the next-best heuristic candidates
-    - Does NOT mutate live ``AIAgent`` private state; live session switching uses ``/model`` or ``llm_request`` middleware.
+    - When ``persist_primary=True`` (user-run ``/fallback-heuristic switch`` and CLI), updates
+      ``model.provider`` and ``model.default`` in ``config.yaml`` and populates ``fallback_providers``.
+    - When ``persist_primary=False`` (model-callable ``fallback_heuristic_switch`` tool), leaves
+      ``model.provider`` / ``model.default`` untouched, writes ``fallback_providers``, and returns the
+      ranked pick plus a ``/model <provider>/<model>`` hint for the user.
     """
     effective_criteria = criteria if criteria is not None else criteria_or_overrides
     effective_save = persist if persist is not None else save
@@ -922,18 +892,22 @@ def switch_model_with_heuristic(
     new_provider = str(chosen["provider"]).strip()
     new_model = str(chosen["model"]).strip()
 
-    if not isinstance(cfg.get("model"), dict):
-        cfg["model"] = {}
-    cfg["model"]["provider"] = new_provider
-    cfg["model"]["default"] = new_model
-    cfg["fallback_heuristics"] = True
+    if persist_primary:
+        if not isinstance(cfg.get("model"), dict):
+            cfg["model"] = {}
+        cfg["model"]["provider"] = new_provider
+        cfg["model"]["default"] = new_model
+        cfg["fallback_heuristics"] = True
+        chain_excl_models = [*excl_models, new_model]
+    else:
+        chain_excl_models = excl_models
 
-    # Materialize remaining candidates into fallback_providers
+    # Materialize candidates into fallback_providers
     sync_fallback_chain_to_config(
         cfg,
         save=effective_save,
         exclude_providers=exclude_providers,
-        exclude_models=[*excl_models, new_model],
+        exclude_models=chain_excl_models,
     )
 
     return {
@@ -943,6 +917,7 @@ def switch_model_with_heuristic(
         "provider": new_provider,
         "model": new_model,
         "provider_switched": old_provider != new_provider,
+        "primary_persisted": persist_primary,
         "criteria_matched": chosen.get("criteria_matched", ""),
         "fallback_chain": cfg.get("fallback_providers", []),
         "switch_command_hint": f"/model {new_provider}/{new_model}",

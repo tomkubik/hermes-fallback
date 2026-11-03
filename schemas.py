@@ -118,10 +118,9 @@ FALLBACK_HEURISTIC_RESOLVE_SCHEMA: dict[str, Any] = {
 FALLBACK_HEURISTIC_SWITCH_SCHEMA: dict[str, Any] = {
     "name": "fallback_heuristic_switch",
     "description": (
-        "Switch the active model and/or provider (and sync fallback_providers in config.yaml) "
-        "to the best available model from the user's existing authenticated providers using "
-        "the heuristic criteria. Use this when the chosen model is unavailable or when the "
-        "user wants to switch models/providers by capability heuristic."
+        "Select the best available model from the user's existing authenticated providers using "
+        "the heuristic criteria, sync fallback_providers in config.yaml, and return the top pick "
+        "along with a `/model <provider>/<model>` hint for switching the live session."
     ),
     "parameters": {
         "type": "object",
@@ -297,10 +296,6 @@ FALLBACK_HEURISTIC_CONFIGURE_SCHEMA: dict[str, Any] = {
             "max_candidates": {
                 "type": "integer",
                 "description": "Number of fallback candidates materialized per rule.",
-            },
-            "auto_switch_primary_when_unavailable": {
-                "type": "boolean",
-                "description": "Automatically switch primary model when the selected primary is unavailable.",
             },
         },
         "required": [],

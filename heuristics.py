@@ -266,7 +266,7 @@ def parse_provider_list(raw: Any) -> tuple[str, ...]:
 
 
 def _read_secret_or_env(env_key: str) -> str:
-    """Read an environment variable via Hermes secret_scope if available, else os.environ.get."""
+    """Read an environment variable via Hermes secret_scope."""
     try:
         from agent.secret_scope import get_secret
 
@@ -275,7 +275,7 @@ def _read_secret_or_env(env_key: str) -> str:
             return val.strip()
     except Exception:
         pass
-    return (os.environ.get(env_key) or "").strip()
+    return ""
 
 
 def _load_active_config(config: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -290,16 +290,6 @@ def _load_active_config(config: Optional[dict[str, Any]] = None) -> dict[str, An
             return loaded
     except Exception:
         pass
-    try:
-        cfg_path = _get_hermes_home() / "config.yaml"
-        if cfg_path.is_file():
-            import yaml
-
-            raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8-sig"))
-            if isinstance(raw, dict):
-                return raw
-    except Exception:
-        pass
     return {}
 
 
@@ -310,8 +300,8 @@ def discover_existing_providers(
     """Discover all existing (authenticated or configured) model providers on this system.
 
     Works completely without a model call by inspecting:
-    1. Environment variables / Hermes secret_scope for provider API keys
-    2. Read-only OAuth / portal session entries in ``~/.hermes/auth.json`` if present
+    1. Hermes's ``list_authenticated_providers`` / ``get_auth_status``
+    2. Environment variables / Hermes secret_scope for provider API keys
     3. ``config.yaml`` (``model.provider``, ``providers``, ``custom_providers``, ``fallback_providers``)
     """
     cfg = _load_active_config(config)
@@ -328,27 +318,29 @@ def discover_existing_providers(
     if isinstance(model_cfg, dict):
         primary_provider = normalize_provider_name(model_cfg.get("provider"))
 
-    # 2. Read-only check of ~/.hermes/auth.json for logged-in OAuth/portal providers
+    # 2. Query Hermes Core's authenticated provider discovery when available
     try:
-        auth_file = _get_hermes_home() / "auth.json"
-        if auth_file.is_file():
-            store = json.loads(auth_file.read_text(encoding="utf-8-sig"))
-            if isinstance(store, dict):
-                active_p = store.get("active_provider")
-                if isinstance(active_p, str) and active_p.strip():
-                    _add(active_p)
-                providers_store = store.get("providers")
-                if isinstance(providers_store, dict):
-                    for pid, pdata in providers_store.items():
-                        if isinstance(pdata, dict) and (
-                            pdata.get("access_token")
-                            or pdata.get("api_key")
-                            or pdata.get("token")
-                            or pdata.get("logged_in")
-                        ):
-                            _add(pid)
+        from hermes_cli.model_switch_providers import list_authenticated_providers
+
+        for entry in list_authenticated_providers(cfg) or []:
+            if isinstance(entry, dict) and entry.get("id"):
+                _add(str(entry["id"]))
     except Exception as exc:
-        logger.debug("Read-only auth.json inspection skipped: %s", exc)
+        logger.debug("list_authenticated_providers probe skipped: %s", exc)
+
+    # 3. Check Hermes auth status for OAuth / portal providers (nous, openai-codex, copilot, anthropic)
+    try:
+        from hermes_cli.auth import get_auth_status
+
+        for pid in ("nous", "openai-codex", "copilot", "anthropic"):
+            try:
+                st = get_auth_status(pid)
+                if isinstance(st, dict) and st.get("logged_in"):
+                    _add(pid)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     # 4. Check environment variables for provider API keys
     for pid, env_keys in PROVIDER_ENV_VARS.items():
