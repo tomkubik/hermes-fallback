@@ -69,7 +69,13 @@ flowchart LR
 
 ## 🚀 Installation
 
-Clone this repository into your Hermes plugins directory (`~/.hermes/plugins/model-fallback-heuristic`):
+Install directly from the official Hermes Plugin Catalog (`Hermes >= 0.23.1`):
+
+```bash
+hermes plugins install model-fallback-heuristic
+```
+
+Or clone manually into your Hermes plugins directory (`~/.hermes/plugins/model-fallback-heuristic`):
 
 ```bash
 git clone https://github.com/tomkubik/hermes-fallback.git ~/.hermes/plugins/model-fallback-heuristic

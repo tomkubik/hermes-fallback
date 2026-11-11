@@ -1,5 +1,5 @@
 name: model-fallback-heuristic
-version: 0.2.0
+version: 0.2.1
 manifest_version: 2
 api_version: 1
 description: "Multi-provider heuristic model fallback and automatic failover routing across all configured providers (parameter count, context window, release recency, flash tier, tool support, provider preference, and reasoning effort) — works seamlessly with or without an LLM call."

@@ -15,7 +15,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
-if str(PLUGIN_DIR) not in sys.path:
+if sys.path[:1] != [str(PLUGIN_DIR)]:
+    if str(PLUGIN_DIR) in sys.path:
+        sys.path.remove(str(PLUGIN_DIR))
     sys.path.insert(0, str(PLUGIN_DIR))
 
 import cli  # noqa: E402
@@ -641,6 +643,33 @@ class TestZeroLLMCallSettingsSyncAndSwitch(unittest.TestCase):
             rewritten = llm_request_middleware(req, SimpleNamespace(model=active_fb_model))
             self.assertNotIn("reasoning_effort", rewritten)
             self.assertEqual(rewritten["extra_body"]["reasoning"], {"enabled": False})
+
+            # Test Hermes v0.23.1 middleware contract (keyword args + {"request": ...} return envelope)
+            v1_res = llm_request_middleware(
+                request=req,
+                original_request=req,
+                middleware_schema_version="hermes.middleware.v1",
+                model=active_fb_model,
+                provider="gemini",
+            )
+            self.assertIsInstance(v1_res, dict)
+            self.assertIn("request", v1_res)
+            self.assertNotIn("reasoning_effort", v1_res["request"])
+
+            # Test Hermes v0.23.1 llm_execution_middleware contract (next_call=... keyword arg)
+            def _boom(_payload):
+                err = RuntimeError("401 unauthorized")
+                err.status_code = 401
+                raise err
+
+            with self.assertRaises(RuntimeError):
+                llm_execution_middleware(
+                    request={"model": active_fb_model},
+                    next_call=_boom,
+                    provider="gemini",
+                    model=active_fb_model,
+                    middleware_schema_version="hermes.middleware.v1",
+                )
 
 
 class TestReviewFindingsF1ToF11AndN1ToN9(unittest.TestCase):

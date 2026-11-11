@@ -133,6 +133,26 @@ PROVIDER_ALIASES: dict[str, str] = {
     "mimo": "xiaomi",
     "kilocode": "kilocode",
     "kilo": "kilocode",
+    "deepinfra": "deepinfra",
+    "fireworks": "fireworks",
+    "fireworks-ai": "fireworks",
+    "novita": "novita",
+    "novita-ai": "novita",
+    "upstage": "upstage",
+    "solar": "upstage",
+    "stepfun": "stepfun",
+    "arcee": "arcee",
+    "nebius": "nebius-token-factory",
+    "nebius-token-factory": "nebius-token-factory",
+    "tencent-tokenhub": "tencent-tokenhub",
+    "tokenhub": "tencent-tokenhub",
+    "commandcode": "commandcode",
+    "ollama-cloud": "ollama-cloud",
+    "qwen-oauth": "qwen-oauth",
+    "alibaba-coding-plan": "alibaba-coding-plan",
+    "azure-foundry": "azure-foundry",
+    "azure": "azure-foundry",
+    "meta-ai": "meta-ai",
     "ollama": "ollama",
     "lmstudio": "lmstudio",
     "lm-studio": "lmstudio",
@@ -141,7 +161,7 @@ PROVIDER_ALIASES: dict[str, str] = {
 
 MULTI_PROVIDER_TOKENS: frozenset[str] = frozenset({"auto", "existing", "any", "all", "*"})
 
-# Environment variables that authenticate each provider (checked via os.environ.get / get_secret)
+# Environment variables that authenticate each provider (checked via get_secret)
 PROVIDER_ENV_VARS: dict[str, tuple[str, ...]] = {
     "openrouter": ("OPENROUTER_API_KEY",),
     "nous": ("NOUS_API_KEY",),
@@ -164,8 +184,20 @@ PROVIDER_ENV_VARS: dict[str, tuple[str, ...]] = {
     "opencode-go": ("OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"),
     "ai-gateway": ("AI_GATEWAY_API_KEY", "VERCEL_AI_GATEWAY_API_KEY"),
     "alibaba": ("DASHSCOPE_API_KEY", "ALIBABA_API_KEY"),
+    "alibaba-coding-plan": ("DASHSCOPE_CODING_PLAN_API_KEY", "DASHSCOPE_API_KEY"),
     "xiaomi": ("XIAOMI_API_KEY", "MIMO_API_KEY"),
     "kilocode": ("KILOCODE_API_KEY",),
+    "deepinfra": ("DEEPINFRA_API_KEY",),
+    "fireworks": ("FIREWORKS_API_KEY",),
+    "novita": ("NOVITA_API_KEY",),
+    "upstage": ("UPSTAGE_API_KEY",),
+    "stepfun": ("STEPFUN_API_KEY",),
+    "arcee": ("ARCEE_API_KEY",),
+    "nebius-token-factory": ("NEBIUS_API_KEY",),
+    "tencent-tokenhub": ("TENCENT_TOKENHUB_API_KEY",),
+    "commandcode": ("COMMANDCODE_API_KEY",),
+    "azure-foundry": ("AZURE_API_KEY", "AZURE_OPENAI_API_KEY"),
+    "ollama-cloud": ("OLLAMA_API_KEY",),
     "ollama": ("OLLAMA_API_KEY", "OLLAMA_HOST"),
     "lmstudio": ("LMSTUDIO_API_KEY", "LMSTUDIO_BASE_URL"),
 }
@@ -188,13 +220,26 @@ DEFAULT_PROVIDER_ORDER: tuple[str, ...] = (
     "bedrock",
     "vertex",
     "alibaba",
+    "qwen-oauth",
+    "alibaba-coding-plan",
+    "deepinfra",
+    "fireworks",
+    "nebius-token-factory",
+    "novita",
     "huggingface",
     "opencode-zen",
     "opencode-go",
     "ai-gateway",
+    "upstage",
+    "stepfun",
+    "arcee",
+    "azure-foundry",
+    "tencent-tokenhub",
+    "commandcode",
     "minimax-cn",
     "xiaomi",
     "kilocode",
+    "ollama-cloud",
     "ollama",
     "lmstudio",
 )
@@ -218,12 +263,25 @@ PAID_FIRST_PROVIDERS: frozenset[str] = frozenset(
         "bedrock",
         "vertex",
         "alibaba",
+        "qwen-oauth",
+        "alibaba-coding-plan",
+        "deepinfra",
+        "fireworks",
+        "nebius-token-factory",
+        "novita",
+        "upstage",
+        "stepfun",
+        "arcee",
+        "azure-foundry",
+        "tencent-tokenhub",
+        "commandcode",
         "huggingface",
         "opencode-zen",
         "opencode-go",
         "ai-gateway",
         "xiaomi",
         "kilocode",
+        "ollama-cloud",
         "ollama",
         "lmstudio",
         "vllm",
@@ -322,17 +380,29 @@ def discover_existing_providers(
     try:
         from hermes_cli.model_switch_providers import list_authenticated_providers
 
-        for entry in list_authenticated_providers(cfg) or []:
-            if isinstance(entry, dict) and entry.get("id"):
-                _add(str(entry["id"]))
+        try:
+            entries = list_authenticated_providers(
+                current_provider=primary_provider,
+                user_providers=cfg.get("providers") if isinstance(cfg.get("providers"), dict) else None,
+                custom_providers=cfg.get("custom_providers") if isinstance(cfg.get("custom_providers"), list) else None,
+                non_blocking_catalogs=True,
+                probe_custom_providers=False,
+            )
+        except TypeError:
+            entries = list_authenticated_providers()
+        for entry in entries or []:
+            if isinstance(entry, dict):
+                slug = entry.get("slug") or entry.get("id")
+                if slug:
+                    _add(str(slug))
     except Exception as exc:
         logger.debug("list_authenticated_providers probe skipped: %s", exc)
 
-    # 3. Check Hermes auth status for OAuth / portal providers (nous, openai-codex, copilot, anthropic)
+    # 3. Check Hermes auth status for OAuth / portal providers
     try:
         from hermes_cli.auth import get_auth_status
 
-        for pid in ("nous", "openai-codex", "copilot", "anthropic"):
+        for pid in ("nous", "openai-codex", "copilot", "anthropic", "qwen-oauth"):
             try:
                 st = get_auth_status(pid)
                 if isinstance(st, dict) and st.get("logged_in"):
@@ -788,6 +858,53 @@ _BUILTIN_PROVIDER_CATALOGS: dict[str, list[str]] = {
         "stepfun/step-3.7-flash:free",
         "anthropic/claude-sonnet-4.6",
         "openai/gpt-5.4",
+    ],
+    "deepinfra": [
+        "Qwen/Qwen3-235B-A22B",
+        "deepseek-ai/DeepSeek-V3",
+        "deepseek-ai/DeepSeek-R1",
+        "meta-llama/Llama-3.3-70B-Instruct",
+    ],
+    "fireworks": [
+        "accounts/fireworks/models/deepseek-v3",
+        "accounts/fireworks/models/deepseek-r1",
+        "accounts/fireworks/models/qwen3-235b-a22b",
+        "accounts/fireworks/models/llama-v3p3-70b-instruct",
+    ],
+    "novita": [
+        "deepseek/deepseek-v3",
+        "deepseek/deepseek-r1",
+        "qwen/qwen3-235b-a22b",
+        "meta-llama/llama-3.3-70b-instruct",
+    ],
+    "nebius-token-factory": [
+        "Qwen/Qwen3-235B-A22B",
+        "deepseek-ai/DeepSeek-V3",
+        "deepseek-ai/DeepSeek-R1",
+        "meta-llama/Llama-3.3-70B-Instruct",
+    ],
+    "upstage": [
+        "solar-pro2",
+        "solar-mini",
+    ],
+    "stepfun": [
+        "step-2-16k",
+        "step-1-256k",
+    ],
+    "qwen-oauth": [
+        "qwen3-coder-plus",
+        "qwen3-max",
+        "qwen3.5-plus",
+    ],
+    "alibaba-coding-plan": [
+        "qwen3-coder-plus",
+        "qwen3-max",
+        "qwen3-coder-flash",
+    ],
+    "ollama-cloud": [
+        "qwen3-coder:30b",
+        "llama3.3:70b",
+        "deepseek-r1:32b",
     ],
 }
 

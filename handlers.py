@@ -483,10 +483,10 @@ def api_request_error_hook(**kwargs: Any) -> None:
     try:
         reason = str(kwargs.get("reason") or "").lower()
         status_code = kwargs.get("status_code")
-        api_kwargs = kwargs.get("api_kwargs")
+        req_payload = kwargs.get("api_kwargs") or kwargs.get("request")
         failed_model = ""
-        if isinstance(api_kwargs, dict):
-            failed_model = str(api_kwargs.get("model") or "").strip()
+        if isinstance(req_payload, dict):
+            failed_model = str(req_payload.get("model") or "").strip()
 
         cfg = load_hermes_config()
         settings = get_plugin_settings(cfg)
@@ -521,20 +521,29 @@ def api_request_error_hook(**kwargs: Any) -> None:
         logger.debug("api_request_error_hook skipped: %s", exc)
 
 
-def llm_request_middleware(request: dict[str, Any], context: Any) -> dict[str, Any]:
+def llm_request_middleware(
+    request: dict[str, Any],
+    context: Any = None,
+    **kwargs: Any,
+) -> dict[str, Any] | None:
     """Middleware: ``llm_request`` — routes per-request model when the requested model failed in-session,
     and normalizes reasoning config for heuristic fallback models."""
+    is_hermes_v1 = "middleware_schema_version" in kwargs or "original_request" in kwargs
     if not isinstance(request, dict):
-        return request
+        return None if is_hermes_v1 else request
     try:
-        model = str(getattr(context, "model", None) or request.get("model") or "").strip()
-        provider = normalize_provider_name(getattr(context, "provider", None) or "")
+        model = str(
+            kwargs.get("model") or getattr(context, "model", None) or request.get("model") or ""
+        ).strip()
+        provider = normalize_provider_name(
+            kwargs.get("provider") or getattr(context, "provider", None) or ""
+        )
         if not model:
-            return request
+            return None if is_hermes_v1 else request
         cfg = load_hermes_config()
         fp_list = cfg.get("fallback_providers")
         if not isinstance(fp_list, list):
-            return request
+            return None if is_hermes_v1 else request
 
         updated_req = dict(request)
         changed = False
@@ -566,35 +575,51 @@ def llm_request_middleware(request: dict[str, Any], context: Any) -> dict[str, A
                 matched_entry = entry
                 break
 
-        if matched_entry is None:
-            return updated_req if changed else request
+        if matched_entry is not None:
+            eff = matched_entry.get("reasoning_effort")
+            if eff in ("none", "off", "false", False):
+                updated_req.pop("reasoning_effort", None)
+                extra_body = updated_req.get("extra_body")
+                if isinstance(extra_body, dict) and "reasoning" in extra_body:
+                    eb = dict(extra_body)
+                    eb["reasoning"] = {"enabled": False}
+                    updated_req["extra_body"] = eb
+                changed = True
 
-        eff = matched_entry.get("reasoning_effort")
-        if eff in ("none", "off", "false", False):
-            updated_req.pop("reasoning_effort", None)
-            extra_body = updated_req.get("extra_body")
-            if isinstance(extra_body, dict) and "reasoning" in extra_body:
-                eb = dict(extra_body)
-                eb["reasoning"] = {"enabled": False}
-                updated_req["extra_body"] = eb
-            changed = True
+        if is_hermes_v1:
+            return (
+                {"request": updated_req, "source": "model-fallback-heuristic"}
+                if changed
+                else None
+            )
         return updated_req if changed else request
     except Exception as exc:
         logger.debug("llm_request_middleware skipped: %s", exc)
-    return request
+    return None if is_hermes_v1 else request
 
 
 def llm_execution_middleware(
-    request: dict[str, Any], call_next: Any, context: Any
+    request: dict[str, Any],
+    next_call: Any = None,
+    context: Any = None,
+    *,
+    call_next: Any = None,
+    **kwargs: Any,
 ) -> Any:
     """Middleware: ``llm_execution`` — catches unavailable model/provider failures and refreshes heuristic fallbacks."""
+    effective_next = next_call or call_next
+    if effective_next is None:
+        return None
     try:
-        return call_next(request)
+        return effective_next(request)
     except Exception as exc:
         try:
-            provider = str(getattr(context, "provider", "") or "").strip()
+            provider = str(
+                kwargs.get("provider") or getattr(context, "provider", "") or ""
+            ).strip()
             model = str(
-                getattr(context, "model", "")
+                kwargs.get("model")
+                or getattr(context, "model", "")
                 or (request.get("model") if isinstance(request, dict) else "")
                 or ""
             ).strip()
